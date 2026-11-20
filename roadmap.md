@@ -23,6 +23,6 @@
 
 - [x] Cabinet ±tolerance rule + ordered storage equations (app, bot)
 - [x] Reconnect GitHub API and n8n in the new workspace
-- [ ] Catalog platform inside this project: catalogs + PDFs moved here, /catalogs page, viewer, admin
-- [ ] Catalog smart assistant here with short, direct answers
-- [ ] CRM "منصة الكتالوجات" button opens the internal catalog page
+- [x] Catalog platform inside this project: catalogs + PDFs moved here, /catalogs page, viewer, admin
+- [x] Catalog smart assistant here with short, direct answers
+- [x] CRM "منصة الكتالوجات" button opens the internal catalog page

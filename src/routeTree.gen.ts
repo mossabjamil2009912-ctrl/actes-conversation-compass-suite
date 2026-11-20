@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActsRouteImport } from './routes/acts'
+import { Route as CatalogsRouteImport } from './routes/catalogs'
 import { Route as ActsRateTokenRouteImport } from './routes/acts.rate.$token'
 import { Route as ApiPublicActsBridgeRouteImport } from './routes/api/public/acts-bridge'
 import { Route as ApiPublicAppVersionRouteImport } from './routes/api/public/app-version'
@@ -24,6 +25,7 @@ import { Route as ApiPublicBotOrderStatusRouteImport } from './routes/api/public
 import { Route as ApiPublicBotPausedRouteImport } from './routes/api/public/bot-paused'
 import { Route as ApiPublicBotReportRequestRouteImport } from './routes/api/public/bot-report-request'
 import { Route as ApiPublicBotTicketRouteImport } from './routes/api/public/bot-ticket'
+import { Route as ApiPublicCatalogAssistantRouteImport } from './routes/api/public/catalog-assistant'
 import { Route as ApiPublicCrmMediaRouteImport } from './routes/api/public/crm-media'
 import { Route as ApiPublicDesktopAppRouteImport } from './routes/api/public/desktop-app'
 import { Route as ApiPublicJobsGithubBackupRouteImport } from './routes/api/public/jobs/github-backup'
@@ -36,6 +38,11 @@ const IndexRoute = IndexRouteImport.update({
 const ActsRoute = ActsRouteImport.update({
   id: '/acts',
   path: '/acts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CatalogsRoute = CatalogsRouteImport.update({
+  id: '/catalogs',
+  path: '/catalogs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ActsRateTokenRoute = ActsRateTokenRouteImport.update({
@@ -104,6 +111,12 @@ const ApiPublicBotTicketRoute = ApiPublicBotTicketRouteImport.update({
   path: '/api/public/bot-ticket',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicCatalogAssistantRoute =
+  ApiPublicCatalogAssistantRouteImport.update({
+    id: '/api/public/catalog-assistant',
+    path: '/api/public/catalog-assistant',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicCrmMediaRoute = ApiPublicCrmMediaRouteImport.update({
   id: '/api/public/crm-media',
   path: '/api/public/crm-media',
@@ -124,6 +137,7 @@ const ApiPublicJobsGithubBackupRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/acts': typeof ActsRouteWithChildren
+  '/catalogs': typeof CatalogsRoute
   '/acts/rate/$token': typeof ActsRateTokenRoute
   '/api/public/acts-bridge': typeof ApiPublicActsBridgeRoute
   '/api/public/app-version': typeof ApiPublicAppVersionRoute
@@ -137,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/api/public/bot-paused': typeof ApiPublicBotPausedRoute
   '/api/public/bot-report-request': typeof ApiPublicBotReportRequestRoute
   '/api/public/bot-ticket': typeof ApiPublicBotTicketRoute
+  '/api/public/catalog-assistant': typeof ApiPublicCatalogAssistantRoute
   '/api/public/crm-media': typeof ApiPublicCrmMediaRoute
   '/api/public/desktop-app': typeof ApiPublicDesktopAppRoute
   '/api/public/jobs/github-backup': typeof ApiPublicJobsGithubBackupRoute
@@ -144,6 +159,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/acts': typeof ActsRouteWithChildren
+  '/catalogs': typeof CatalogsRoute
   '/acts/rate/$token': typeof ActsRateTokenRoute
   '/api/public/acts-bridge': typeof ApiPublicActsBridgeRoute
   '/api/public/app-version': typeof ApiPublicAppVersionRoute
@@ -157,6 +173,7 @@ export interface FileRoutesByTo {
   '/api/public/bot-paused': typeof ApiPublicBotPausedRoute
   '/api/public/bot-report-request': typeof ApiPublicBotReportRequestRoute
   '/api/public/bot-ticket': typeof ApiPublicBotTicketRoute
+  '/api/public/catalog-assistant': typeof ApiPublicCatalogAssistantRoute
   '/api/public/crm-media': typeof ApiPublicCrmMediaRoute
   '/api/public/desktop-app': typeof ApiPublicDesktopAppRoute
   '/api/public/jobs/github-backup': typeof ApiPublicJobsGithubBackupRoute
@@ -165,6 +182,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/acts': typeof ActsRouteWithChildren
+  '/catalogs': typeof CatalogsRoute
   '/acts/rate/$token': typeof ActsRateTokenRoute
   '/api/public/acts-bridge': typeof ApiPublicActsBridgeRoute
   '/api/public/app-version': typeof ApiPublicAppVersionRoute
@@ -178,6 +196,7 @@ export interface FileRoutesById {
   '/api/public/bot-paused': typeof ApiPublicBotPausedRoute
   '/api/public/bot-report-request': typeof ApiPublicBotReportRequestRoute
   '/api/public/bot-ticket': typeof ApiPublicBotTicketRoute
+  '/api/public/catalog-assistant': typeof ApiPublicCatalogAssistantRoute
   '/api/public/crm-media': typeof ApiPublicCrmMediaRoute
   '/api/public/desktop-app': typeof ApiPublicDesktopAppRoute
   '/api/public/jobs/github-backup': typeof ApiPublicJobsGithubBackupRoute
@@ -187,6 +206,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/acts'
+    | '/catalogs'
     | '/acts/rate/$token'
     | '/api/public/acts-bridge'
     | '/api/public/app-version'
@@ -200,6 +220,7 @@ export interface FileRouteTypes {
     | '/api/public/bot-paused'
     | '/api/public/bot-report-request'
     | '/api/public/bot-ticket'
+    | '/api/public/catalog-assistant'
     | '/api/public/crm-media'
     | '/api/public/desktop-app'
     | '/api/public/jobs/github-backup'
@@ -207,6 +228,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/acts'
+    | '/catalogs'
     | '/acts/rate/$token'
     | '/api/public/acts-bridge'
     | '/api/public/app-version'
@@ -220,6 +242,7 @@ export interface FileRouteTypes {
     | '/api/public/bot-paused'
     | '/api/public/bot-report-request'
     | '/api/public/bot-ticket'
+    | '/api/public/catalog-assistant'
     | '/api/public/crm-media'
     | '/api/public/desktop-app'
     | '/api/public/jobs/github-backup'
@@ -227,6 +250,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/acts'
+    | '/catalogs'
     | '/acts/rate/$token'
     | '/api/public/acts-bridge'
     | '/api/public/app-version'
@@ -240,6 +264,7 @@ export interface FileRouteTypes {
     | '/api/public/bot-paused'
     | '/api/public/bot-report-request'
     | '/api/public/bot-ticket'
+    | '/api/public/catalog-assistant'
     | '/api/public/crm-media'
     | '/api/public/desktop-app'
     | '/api/public/jobs/github-backup'
@@ -248,6 +273,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ActsRoute: typeof ActsRouteWithChildren
+  CatalogsRoute: typeof CatalogsRoute
   ApiPublicActsBridgeRoute: typeof ApiPublicActsBridgeRoute
   ApiPublicAppVersionRoute: typeof ApiPublicAppVersionRoute
   ApiPublicBotButtonLockRoute: typeof ApiPublicBotButtonLockRoute
@@ -260,6 +286,7 @@ export interface RootRouteChildren {
   ApiPublicBotPausedRoute: typeof ApiPublicBotPausedRoute
   ApiPublicBotReportRequestRoute: typeof ApiPublicBotReportRequestRoute
   ApiPublicBotTicketRoute: typeof ApiPublicBotTicketRoute
+  ApiPublicCatalogAssistantRoute: typeof ApiPublicCatalogAssistantRoute
   ApiPublicCrmMediaRoute: typeof ApiPublicCrmMediaRoute
   ApiPublicDesktopAppRoute: typeof ApiPublicDesktopAppRoute
   ApiPublicJobsGithubBackupRoute: typeof ApiPublicJobsGithubBackupRoute
@@ -279,6 +306,13 @@ declare module '@tanstack/react-router' {
       path: '/acts'
       fullPath: '/acts'
       preLoaderRoute: typeof ActsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/catalogs': {
+      id: '/catalogs'
+      path: '/catalogs'
+      fullPath: '/catalogs'
+      preLoaderRoute: typeof CatalogsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/acts/rate/$token': {
@@ -372,6 +406,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicBotTicketRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/catalog-assistant': {
+      id: '/api/public/catalog-assistant'
+      path: '/api/public/catalog-assistant'
+      fullPath: '/api/public/catalog-assistant'
+      preLoaderRoute: typeof ApiPublicCatalogAssistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/crm-media': {
       id: '/api/public/crm-media'
       path: '/api/public/crm-media'
@@ -409,6 +450,7 @@ const ActsRouteWithChildren = ActsRoute._addFileChildren(ActsRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActsRoute: ActsRouteWithChildren,
+  CatalogsRoute: CatalogsRoute,
   ApiPublicActsBridgeRoute: ApiPublicActsBridgeRoute,
   ApiPublicAppVersionRoute: ApiPublicAppVersionRoute,
   ApiPublicBotButtonLockRoute: ApiPublicBotButtonLockRoute,
@@ -421,6 +463,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicBotPausedRoute: ApiPublicBotPausedRoute,
   ApiPublicBotReportRequestRoute: ApiPublicBotReportRequestRoute,
   ApiPublicBotTicketRoute: ApiPublicBotTicketRoute,
+  ApiPublicCatalogAssistantRoute: ApiPublicCatalogAssistantRoute,
   ApiPublicCrmMediaRoute: ApiPublicCrmMediaRoute,
   ApiPublicDesktopAppRoute: ApiPublicDesktopAppRoute,
   ApiPublicJobsGithubBackupRoute: ApiPublicJobsGithubBackupRoute,

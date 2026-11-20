@@ -307,7 +307,7 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
   return (
     <div dir="rtl" className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen lg:overflow-hidden">
       <FrontendRedirect />
-      {showCatalogs && <FloatingAppWindow title="منصة الكتالوجات" src="https://catalog-whisperer-starligight-shelf.lovable.app" allow="clipboard-write" onClose={() => setShowCatalogs(false)} />}
+      {showCatalogs && <FloatingAppWindow title="منصة الكتالوجات" src="/catalogs" allow="clipboard-write" onClose={() => setShowCatalogs(false)} />}
       {showActs && <FloatingAppWindow title="منصة أكتس" src="https://sunwise-engineer-network.lovable.app" allow="geolocation; clipboard-write" onClose={() => setShowActs(false)} />}
       {!online && (
         <div className="bg-accent px-3 py-1 text-center text-xs font-semibold text-accent-foreground">

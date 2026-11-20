@@ -1,1 +1,2 @@
 - LV battery brand choice: `lv-battery.ts` ↔ bot `ACTES_LVBAT` (16 kWh, sized systems) and `ACTES_RESBAT` (5.12 kWh, ready-made home systems) — change together.
+- Catalog platform (`/catalogs`): `catalog_*` tables + private `catalogs` bucket via `catalogs.functions.ts`; assistant (`catalog-assistant.server.ts`) reads all `catalog_profiles` + page search — uploads must build a profile.
