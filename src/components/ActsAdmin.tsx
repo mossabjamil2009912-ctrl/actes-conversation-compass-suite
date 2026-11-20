@@ -1,7 +1,8 @@
+import { FloatingAppWindow } from "@/components/FloatingAppWindow";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Phone, MessageCircle, Copy, ExternalLink, Search, Plus, Pencil, Trash2 } from "lucide-react";
+import { Phone, MessageCircle, Copy, ExternalLink, Search, Plus, Trash2 } from "lucide-react";
 import { actsAdminData, actsSetEngineer, actsUpdateRequest, actsModerate, actsSaveEngineer, actsDeleteEngineer } from "@/lib/acts.functions";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { offlineQuery } from "@/lib/offline-cache";
@@ -9,43 +10,45 @@ import { REQ_STATUS, ENG_STATUS, SPECIALTIES, GOVERNORATES, REG_SERVICES } from 
 
 type Data = Awaited<ReturnType<typeof actsAdminData>>;
 type Eng = Data["engineers"][number];
-type Sub = "regs" | "engineers" | "requests" | "reviews" | "talent";
+type Sub = "regs" | "engineers" | "survey" | "requests" | "reviews";
+const isSurvey = (r: { service: string }) => r.service.includes("قياس");
 const card = "rounded-xl border border-border bg-background p-3 text-sm";
 const sm = "rounded-full border px-2.5 py-1 text-xs font-semibold";
 
-export function ActsAdmin({ pw }: { pw: string }) {
+export function ActsAdmin({ pw, onOpenChat, onOpenApp }: { pw: string; onOpenChat?: ((phone: string, name: string) => void) | undefined; onOpenApp?: () => void }) {
   const load = useServerFn(actsAdminData);
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery(offlineQuery({ queryKey: ["acts-admin"], queryFn: () => load({ data: { pw } }) }));
   const refresh = () => qc.invalidateQueries({ queryKey: ["acts-admin"] });
   const [sub, setSub] = useState<Sub>("regs");
+  const [showApp, setShowApp] = useState(false);
   const [edit, setEdit] = useState<Eng | "new" | null>(null);
   const d: Data = data ?? { engineers: [], requests: [], reviews: [], reports: [] };
   const pending = d.engineers.filter((e) => e.status === "pending");
   const openReports = d.reports.filter((r) => !r.resolved);
   const subs: [Sub, string, number][] = [
-    ["regs", "طلبات التسجيل", pending.length], ["engineers", "المهندسون", 0], ["requests", "طلبات الخدمة", d.requests.filter((r) => r.status === "new").length],
-    ["reviews", "التقييمات والبلاغات", openReports.length], ["talent", "قاعدة المواهب", 0],
+    ["regs", "طلبات التسجيل", pending.length], ["engineers", "المهندسون", 0], ["survey", "طلبات قياس الأحمال", d.requests.filter((r) => isSurvey(r) && r.status === "new").length], ["requests", "طلبات الخدمة", d.requests.filter((r) => !isSurvey(r) && r.status === "new").length],
+    ["reviews", "التقييمات والبلاغات", openReports.length],
   ];
   return (
     <div dir="rtl" className="space-y-3 p-3">
       <div className="flex items-center justify-between"><h2 className="font-bold">منصة ACTES</h2>
-        <a href="https://sunwise-engineer-network.lovable.app" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary underline"><ExternalLink className="h-3 w-3" />فتح تطبيق ACTES</a></div>
+        <button type="button" onClick={() => (onOpenApp ? onOpenApp() : setShowApp(true))} className="inline-flex items-center gap-1 text-xs text-primary underline"><ExternalLink className="h-3 w-3" />فتح منصة أكتس</button>{showApp && <FloatingAppWindow title="منصة أكتس" src="https://sunwise-engineer-network.lovable.app" allow="geolocation; clipboard-write" onClose={() => setShowApp(false)} />}</div>
       <div className="flex gap-1.5 overflow-x-auto pb-1">{subs.map(([k, l, n]) => <button key={k} onClick={() => setSub(k)} className={`${sm} shrink-0 ${sub === k ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{l}{n > 0 && <span className="mr-1 rounded-full bg-destructive px-1.5 text-destructive-foreground">{n}</span>}</button>)}</div>
       {isLoading && <p className="text-sm text-muted-foreground">جارٍ التحميل...</p>}
       {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
-      {sub === "regs" && <EngList onEdit={setEdit} pw={pw} rows={pending} refresh={refresh} empty="لا توجد طلبات تسجيل جديدة." />}
+      {sub === "regs" && <EngList onOpenChat={onOpenChat} onEdit={setEdit} pw={pw} rows={pending} refresh={refresh} empty="لا توجد طلبات تسجيل جديدة." />}
       {sub === "engineers" && <div className="flex justify-end"><button className={`${sm} inline-flex items-center gap-1 border-primary text-primary`} onClick={() => setEdit("new")}><Plus className="h-3 w-3" />إضافة مهندس</button></div>}
       {sub === "engineers" && <EngList onEdit={setEdit} pw={pw} rows={d.engineers.filter((e) => e.status !== "pending" && e.kind === "engineer")} refresh={refresh} empty="لا يوجد مهندسون بعد." />}
-      {sub === "requests" && <Requests pw={pw} d={d} refresh={refresh} />}
+      {sub === "survey" && <Surveys rows={d.requests.filter(isSurvey)} onOpenChat={onOpenChat} />}
+      {sub === "requests" && <Requests pw={pw} d={{ ...d, requests: d.requests.filter((r) => !isSurvey(r)) }} refresh={refresh} />}
       {sub === "reviews" && <Reviews pw={pw} d={d} refresh={refresh} />}
-      {sub === "talent" && <Talent d={d} />}
       {edit && <EngForm pw={pw} eng={edit === "new" ? null : edit} onClose={() => setEdit(null)} refresh={refresh} />}
     </div>
   );
 }
 
-function EngList({ pw, rows, refresh, empty, onEdit }: { pw: string; rows: Data["engineers"]; refresh: () => void; empty: string; onEdit: (e: Eng) => void }) {
+function EngList({ pw, rows, refresh, empty, onOpenChat }: { pw: string; rows: Data["engineers"]; refresh: () => void; empty: string; onEdit: (e: Eng) => void; onOpenChat?: ((phone: string, name: string) => void) | undefined }) {
   const set = useServerFn(actsSetEngineer);
   const del = useServerFn(actsDeleteEngineer);
   const [open, setOpen] = useState<string | null>(null);
@@ -72,22 +75,40 @@ function EngList({ pw, rows, refresh, empty, onEdit }: { pw: string; rows: Data[
       </div>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {e.status === "pending" ? (e.phone
-          ? <a className={`${sm} inline-flex items-center gap-1 border-primary bg-primary text-primary-foreground`} target="_blank" rel="noreferrer" href={`https://wa.me/${e.phone.replace(/\D/g, "")}?text=${encodeURIComponent(`مرحباً ${e.name}، معك فريق أكتس بخصوص طلب انضمامك إلى منصة ACTES.`)}`}><MessageCircle className="h-3 w-3" />فتح محادثة واتساب</a>
+          ? <button className={`${sm} inline-flex items-center gap-1 border-primary bg-primary text-primary-foreground`} onClick={() => onOpenChat?.(e.phone!, e.name)}><MessageCircle className="h-3 w-3" />فتح محادثة واتساب</button>
           : <span className="text-xs text-muted-foreground">لا يوجد رقم هاتف</span>)
           : e.status !== "approved" && <button className={`${sm} border-primary text-primary`} onClick={() => act(e.id, "approved")}>اعتماد</button>}
         {e.status === "approved" && <button className={`${sm} border-border`} onClick={() => act(e.id, "suspended")}>إيقاف</button>}
-        <button className={`${sm} inline-flex items-center gap-1 border-border`} onClick={() => onEdit(e)}><Pencil className="h-3 w-3" />تعديل</button>
         <button className={`${sm} inline-flex items-center gap-1 border-destructive text-destructive`} onClick={async () => { if (!window.confirm(`حذف ${e.name} نهائياً؟`)) return; await del({ data: { pw, id: e.id } }); refresh(); }}><Trash2 className="h-3 w-3" />حذف</button>
       </div>
     </div>;
   })}</div>;
 }
 
-function Requests({ pw, d, refresh }: { pw: string; d: Data; refresh: () => void }) {
+function Surveys({ rows, onOpenChat }: { rows: Data["requests"]; onOpenChat?: ((phone: string, name: string) => void) | undefined }) {
+  if (!rows.length) return <p className="text-sm text-muted-foreground">لا توجد طلبات قياس أحمال بعد.</p>;
+  return <div className="space-y-2">{rows.map((r) => {
+    const sys = r.description.replace(/\[طلب قياس أحمال\]/, "").replace(/الموقع:.*$/, "").replace(/[\[\]]/g, "").trim();
+    const loc = [r.governorate, r.city, r.location].filter(Boolean).join(" - ");
+    const Row = ({ k, v, ltr }: { k: string; v: string; ltr?: boolean }) => <div className="flex justify-between gap-2 border-b border-border py-1.5 last:border-0"><span className="text-muted-foreground">{k}</span><b dir={ltr ? "ltr" : undefined}>{v || "—"}</b></div>;
+    return <div key={r.id} className={card}>
+      <div className="mb-1 flex justify-between"><b>قياس الأحمال</b><span className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString("ar", { dateStyle: "short", timeStyle: "short" })}</span></div>
+      <div className="text-sm">
+        <Row k="الاسم" v={r.name ?? "عميل"} />
+        <Row k="الهاتف" v={r.phone} ltr />
+        <Row k="الموقع" v={loc} />
+        <Row k="النظام" v={sys} />
+      </div>
+      <button className={`${sm} mt-2 inline-flex w-full items-center justify-center gap-1 border-primary bg-primary text-primary-foreground`} onClick={() => onOpenChat?.(r.phone, r.name ?? "عميل")}><MessageCircle className="h-3 w-3" />فتح المحادثة</button>
+    </div>;
+  })}</div>;
+}
+
+function Requests({ pw, d, refresh, empty = "لا توجد طلبات خدمة بعد." }: { pw: string; d: Data; refresh: () => void; empty?: string }) {
   const upd = useServerFn(actsUpdateRequest);
   const approved = d.engineers.filter((e) => e.status === "approved");
   const [notes, setNotes] = useState<Record<string, string>>({});
-  if (!d.requests.length) return <p className="text-sm text-muted-foreground">لا توجد طلبات خدمة بعد.</p>;
+  if (!d.requests.length) return <p className="text-sm text-muted-foreground">{empty}</p>;
   return <div className="space-y-2">{d.requests.map((r) => {
     const save = async (p: Partial<{ status: string; engineer_id: string | null; admin_notes: string }>) => {
       await upd({ data: { pw, id: r.id, status: (p.status ?? r.status) as "new", engineer_id: p.engineer_id !== undefined ? p.engineer_id : r.engineer_id, admin_notes: p.admin_notes ?? r.admin_notes } }); refresh();
@@ -127,21 +148,6 @@ function Reviews({ pw, d, refresh }: { pw: string; d: Data; refresh: () => void 
       {reported.has(v.id) && !v.hidden && <button className={`${sm} border-primary text-primary`} onClick={async () => { await mod({ data: { pw, review_id: v.id, hidden: false } }); refresh(); }}>إبقاء وإغلاق البلاغ</button>}
     </div>
   </div>)}</div>;
-}
-
-function Talent({ d }: { d: Data }) {
-  const [q, setQ] = useState(""); const [sp, setSp] = useState(""); const [kind, setKind] = useState("");
-  const rows = d.engineers.filter((e) => (!sp || e.specialty === sp) && (!kind || e.kind === kind) && (!q || `${e.name} ${e.skills.join(" ")} ${e.tools.join(" ")} ${e.city ?? ""} ${e.governorate ?? ""}`.includes(q)));
-  return <div className="space-y-2">
-    <div className="relative"><Search className="absolute right-2 top-2.5 h-4 w-4 text-muted-foreground" /><input className="w-full rounded-lg border border-border bg-card p-2 pr-8 text-sm" placeholder="بحث بالاسم، المهارة، البرنامج أو المدينة" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-    <div className="grid grid-cols-2 gap-2">
-      <select className="rounded-lg border border-border bg-card p-1.5 text-xs" value={sp} onChange={(e) => setSp(e.target.value)}><option value="">كل التخصصات</option>{SPECIALTIES.map((x) => <option key={x}>{x}</option>)}</select>
-      <select className="rounded-lg border border-border bg-card p-1.5 text-xs" value={kind} onChange={(e) => setKind(e.target.value)}><option value="">الكل</option><option value="engineer">مهندسون</option><option value="student">طلاب</option></select></div>
-    <p className="text-xs text-muted-foreground">{rows.length} نتيجة</p>
-    {rows.map((e) => <div key={e.id} className={card}><b>{e.name}</b> <span className="text-xs text-muted-foreground">— {e.kind === "student" ? "طالب" : "مهندس"} · {ENG_STATUS[e.status]}</span>
-      <p className="text-xs">{e.specialty} · {[e.governorate, e.city].filter(Boolean).join(" - ")} · {e.years_exp} سنوات{e.phone && <> · <a href={`https://wa.me/${e.phone}`} target="_blank" rel="noreferrer" dir="ltr">{e.phone}</a></>}</p>
-      <p className="text-xs text-muted-foreground">{[...e.skills, ...e.tools].join("، ")}</p></div>)}
-  </div>;
 }
 
 const inp = "w-full rounded-lg border border-border bg-card p-2 text-sm";

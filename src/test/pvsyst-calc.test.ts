@@ -11,7 +11,12 @@ describe("simulation report numbers", () => {
   });
   it("reads the bot's system text", () => {
     expect(parseSystem("إنفرتر سوليس 50 كيلو وات 3 فاز جهد عالي × 2 | ألواح: 150 (108 ك.و) | بطاريات: 128 كيلو"))
-      .toEqual({ kw: 50, invCount: 2, three: true, panels: 150, batKwh: 128 });
+      .toMatchObject({ kw: 50, invCount: 2, three: true, panels: 150, batKwh: 128 });
+  });
+  it("reads panel count before ألواح, not the 720W wattage", () => {
+    const sp = parseSystem("طلب دراسة PVsyst – 8 كيلو — بطارية 16 كيلو — 8 ألواح 720W");
+    expect(sp?.panels).toBe(8);
+    expect(simulate(sp!).kwp).toBe(5.76);
   });
   it("capacity is panels × 0.72 kWp and DC/AC ratio follows", () => {
     const s = simulate({ kw: 50, invCount: 2, three: true, panels: 150, batKwh: 128 });
@@ -41,5 +46,27 @@ describe("customer site choices", () => {
     const spec = { kw: 50, invCount: 2, three: true, panels: 150, batKwh: 128 };
     const low = simulate(spec, { ...SANAA_SITE, globInc: SANAA_SITE.globInc.map((g) => g * 0.87) });
     expect(low.produced).toBeLessThan(simulate(spec).produced);
+  });
+});
+
+import { parseOrientation } from "@/lib/pvsyst-calc";
+describe("tilt and direction from request text", () => {
+  it("reads tilt and direction", () => {
+    expect(parseOrientation("8 ألواح 720W — ميلان 15 — اتجاه جنوب")).toEqual({ tilt: 15, dir: "s" });
+    expect(parseOrientation("زاوية ٢٠° شرق وغرب")).toEqual({ tilt: 20, dir: "ew" });
+    expect(parseOrientation("8 ألواح 720W")).toEqual({ tilt: null, dir: null });
+  });
+});
+
+describe("panel wattage and exact kWp", () => {
+  it("1 panel of 595W gives exactly 0.595 kWp, no rounding", async () => {
+    const { parseSystem, simulate, kwpText } = await import("@/lib/pvsyst-calc");
+    const spec = parseSystem("طلب دراسة PVsyst – 1.6 كيلو — بطارية 1.28 كيلو — 1 لوح 595W")!;
+    expect(spec.panelW).toBe(595);
+    expect(kwpText(simulate(spec).kwp)).toBe("0.595");
+  });
+  it("8 panels of 720W gives exactly 5.76 kWp", async () => {
+    const { parseSystem, simulate, kwpText } = await import("@/lib/pvsyst-calc");
+    expect(kwpText(simulate(parseSystem("8 كيلو — 8 ألواح 720W")!).kwp)).toBe("5.76");
   });
 });

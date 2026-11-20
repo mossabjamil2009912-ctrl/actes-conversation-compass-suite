@@ -1,3 +1,4 @@
+import { FloatingAppWindow } from "@/components/FloatingAppWindow";
 import { createFileRoute } from "@tanstack/react-router";
 import { FrontendRedirect } from "@/components/FrontendRedirect";
 import { ConnectionSettings } from "@/components/ConnectionSettings";
@@ -30,7 +31,7 @@ function playChime() {
   } catch { /* ignore */ }
 }
 import { STAGES, type Stage } from "@/lib/crm-data";
-import { listCustomers, getMessages, sendMessage, sendAttachment, saveNote, setBotPaused, listCatalog, listOrders, listTickets, listReportRequests, listQuotes, getKwhPrice } from "@/lib/crm.functions";
+import { listCustomers, getMessages, sendMessage, sendAttachment, saveNote, setBotPaused, listCatalog, listOrders, listTickets, listReportRequests, listQuotes, getKwhPrice, openCustomerChat } from "@/lib/crm.functions";
 import { enqueue, flush, isNetworkError, usePending } from "@/lib/outbox";
 import { offlineQuery, snapshotTime } from "@/lib/offline-cache";
 import { Paperclip, X } from "lucide-react";
@@ -160,7 +161,7 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
   const { data: customers = [], isLoading } = useQuery(offlineQuery({
     queryKey: ["customers"],
     queryFn: () => list({ data: { pw } }),
-    refetchInterval: 20000,
+    refetchInterval: 5000,
   }));
   // حفظ كل المحادثات على الجهاز للعمل دون إنترنت
   const qcAll = useQueryClient();
@@ -209,12 +210,25 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       void qcAll.invalidateQueries({ queryKey: ["messages", m.id] });
     });
   }, [online, pendingAll.length, sendQueued, pw, qcAll]);
+  const openChat = useServerFn(openCustomerChat);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Stage | "all">("all");
   const [openId, setOpenId] = useState<string | null>(null);
   const [view, setView] = useState<"chats" | "orders" | "reports" | "tickets" | "catalog" | "quote" | "flow" | "acts">("chats");
   const { data: rep } = useReports(pw);
   const pendingReports = (rep?.requests ?? []).filter((r) => r.status === "pending").length;
+  // إشعار تفاعلي عند وصول طلب تقرير PVsyst أو مخطط SLD جديد
+  const seenReps = useRef<Set<string> | null>(null);
+  const [repAlert, setRepAlert] = useState<{ id: string; name: string; kind: string } | null>(null);
+  const [autoOpenRep, setAutoOpenRep] = useState<string | null>(null);
+  useEffect(() => {
+    const reqs = (rep?.requests ?? []).filter((r) => r.status === "pending");
+    if (!rep) return;
+    if (!seenReps.current) { seenReps.current = new Set(reqs.map((r) => r.id)); return; }
+    const fresh = reqs.filter((r) => !seenReps.current!.has(r.id));
+    fresh.forEach((r) => seenReps.current!.add(r.id));
+    if (fresh.length) { const r = fresh[0]!; setRepAlert({ id: r.id, name: r.name || "عميل", kind: r.kind }); playChime(); }
+  }, [rep]);
   const { data: tickets = [] } = useTickets(pw);
   const openTickets = tickets.filter((t) => t.status === "open").length;
   const { data: orders = [] } = useOrders(pw);
@@ -284,12 +298,17 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
     { k: "catalog" as const, l: "الأصناف", i: LayoutGrid, n: 0 },
     { k: "quote" as const, l: "إنشاء عرض سعر", i: FilePlus2, n: 0 },
     { k: "flow" as const, l: "المسار", i: RouteIcon, n: 0 },
-    { k: "acts" as const, l: "ACTES", i: UsersIcon, n: 0 },
+    { k: "acts" as const, l: "منصة أكتس", i: UsersIcon, n: 0 },
+    { k: "catalogs" as const, l: "منصة الكتالوجات", i: LayoutGrid, n: 0 },
   ];
+  const [showCatalogs, setShowCatalogs] = useState(false);
+  const [showActs, setShowActs] = useState(false);
 
   return (
     <div dir="rtl" className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen lg:overflow-hidden">
       <FrontendRedirect />
+      {showCatalogs && <FloatingAppWindow title="منصة الكتالوجات" src="https://catalog-whisperer-starligight-shelf.lovable.app" allow="clipboard-write" onClose={() => setShowCatalogs(false)} />}
+      {showActs && <FloatingAppWindow title="منصة أكتس" src="https://sunwise-engineer-network.lovable.app" allow="geolocation; clipboard-write" onClose={() => setShowActs(false)} />}
       {!online && (
         <div className="bg-accent px-3 py-1 text-center text-xs font-semibold text-accent-foreground">
           أنت دون إنترنت — {savedAt ? `تعرض آخر نسخة محفوظة على الجهاز من {new Date(savedAt).toLocaleString("ar", { dateStyle: "short", timeStyle: "short" })}` : "لم تُحفظ نسخة على الجهاز بعد — افتح التطبيق مرة واحدة والإنترنت شغّال"}، وتتحدث تلقائياُ عند عودة الاتصال
@@ -303,11 +322,11 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground"><MessageCircle className="h-4 w-4" /></span>
             محادثات العملاء
           </h1>
-          <nav className="order-last grid w-full grid-cols-4 items-center gap-1 md:order-none md:flex md:w-auto md:flex-1 md:justify-center">
+          <nav className="order-last grid w-full grid-cols-5 items-center gap-0.5 md:order-none md:flex md:w-auto md:flex-1 md:justify-center">
             {tabs.map((t) => (
-              <button key={t.k} onClick={() => { setView(t.k); if (t.k !== "chats") setOpenId(null); }}
-                className={`relative flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-[11px] font-semibold leading-tight md:flex-row md:gap-1.5 md:px-3 md:text-sm ${view === t.k ? "bg-primary text-primary-foreground shadow" : "hover:bg-ink-foreground/10"}`}>
-                <t.i className="h-4 w-4" />{t.l}
+              <button key={t.k} onClick={() => { if (t.k === "catalogs") { setShowCatalogs(true); return; } setView(t.k); if (t.k !== "chats") setOpenId(null); }}
+                className={`relative flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-1 text-[10px] font-semibold leading-tight md:flex-row md:gap-1 md:px-2 md:text-xs ${view === t.k ? "bg-primary text-primary-foreground shadow" : "hover:bg-ink-foreground/10"}`}>
+                <t.i className="h-3.5 w-3.5 shrink-0" /><span className="max-w-full text-center">{t.l}</span>
                 {t.n > 0 && <span className="absolute -top-1 left-1 rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">{t.n}</span>}
               </button>
             ))}
@@ -326,13 +345,21 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
         </div>
       </header>
 
+      {repAlert && (
+        <div className="fixed inset-x-2 top-2 z-40 mx-auto flex max-w-md items-center gap-2 rounded-xl border border-primary/40 bg-card p-3 shadow-2xl animate-in slide-in-from-top">
+          <FileBarChart className="h-5 w-5 shrink-0 text-primary" />
+          <p className="min-w-0 flex-1 text-sm">وصل طلب {repAlert.kind === "sld" ? "مخطط SLD" : "تقرير PVsyst"} من <b>{repAlert.name}</b></p>
+          <button onClick={() => { setAutoOpenRep(repAlert.id); setView("reports"); setRepAlert(null); }} className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground">معاينة وإرسال</button>
+          <button onClick={() => setRepAlert(null)} aria-label="إغلاق" className="shrink-0 rounded-md p-1 hover:bg-muted"><X className="h-4 w-4" /></button>
+        </div>
+      )}
       <div className="mx-auto w-full max-w-7xl flex-1 space-y-3 p-3 md:p-4 lg:flex lg:min-h-0 lg:flex-col lg:space-y-2 lg:p-2">
 
         {view === "orders" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><Orders pw={pw} /></div>
-        : view === "reports" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><Reports pw={pw} /></div>
+        : view === "reports" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><Reports pw={pw} autoOpenId={autoOpenRep} onAutoOpened={() => setAutoOpenRep(null)} /></div>
         : view === "tickets" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><Tickets pw={pw} /></div>
         : view === "catalog" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><Catalog pw={pw} /></div>
-        : view === "acts" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><ActsAdmin pw={pw} /></div>
+        : view === "acts" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><ActsAdmin pw={pw} onOpenApp={() => setShowActs(true)} onOpenChat={async (phone, name) => { const r = await openChat({ data: { pw, phone, name } }); await qcAll.invalidateQueries({ queryKey: ["customers"] }); setView("chats"); setOpenId(r.id); }} /></div>
         : view === "flow" ? <div className="rounded-xl border border-border bg-card lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><FlowPinGate><BotFlow pw={pw} /></FlowPinGate></div>
         : view === "quote" ? <div className="rounded-xl border border-border bg-background lg:min-h-0 lg:flex-1 lg:overflow-hidden"><QuoteBuilder pw={pw} /></div> : <>
         <div className="lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-3">
@@ -526,7 +553,21 @@ function Chat({ pw, c, onBack, onInfo }: { pw: string; c: Cust; onBack: () => vo
   const fileIn = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
+  const [over, setOver] = useState(false);
   const pending = usePending(c.id);
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault(); setOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) { if (f.size > 16 * 1024 * 1024) { setErr("حجم الملف أكبر من 16MB"); return; } setErr(""); setFile(f); return; }
+    const raw = (e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain") || "").split("\n").find((l) => /^https?:\/\//.test(l.trim()))?.trim();
+    if (!raw) return;
+    if (!/\.pdf(\?|#|$)/i.test(raw)) { setText((t) => (t ? t + "\n" : "") + raw); return; }
+    const name = decodeURIComponent(raw.split(/[?#]/)[0]!.split("/").pop() || "catalog.pdf");
+    setSending(true); setErr("");
+    try { await sendFile({ data: { pw, id: c.id, text: text.trim(), file_name: name, mime: "application/pdf", url: raw } }); setText(""); await refetch(); }
+    catch (x) { setErr(x instanceof Error ? x.message : "تعذّر الإرسال"); }
+    finally { setSending(false); }
+  };
   const { data: msgs = [], refetch } = useQuery(offlineQuery({
     queryKey: ["messages", c.id],
     queryFn: () => get({ data: { pw, id: c.id } }),
@@ -546,7 +587,8 @@ function Chat({ pw, c, onBack, onInfo }: { pw: string; c: Cust; onBack: () => vo
   return (
     <>
       <div className="flex h-full flex-1 justify-center overflow-hidden md:py-0">
-      <div className="relative flex h-full w-full flex-col overflow-hidden bg-phone shadow-2xl md:aspect-[9/19] md:w-auto md:rounded-[2.6rem] md:border-[10px] md:border-phone">
+      <div onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={(e) => { if (e.currentTarget === e.target) setOver(false); }} onDrop={onDrop} className="relative flex h-full w-full flex-col overflow-hidden bg-phone shadow-2xl md:aspect-[9/19] md:w-auto md:rounded-[2.6rem] md:border-[10px] md:border-phone">
+        {over && <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-primary/30 text-sm font-bold text-primary-foreground">أفلت الكتالوج هنا للإرسال</div>}
         <div className="absolute left-1/2 top-1.5 z-20 hidden h-5 w-24 -translate-x-1/2 rounded-full bg-phone md:block" />
         <div className="flex items-center gap-1 bg-wa-bar px-2 py-1 text-wa-text md:pt-6">
           <button onClick={onBack} aria-label="رجوع" className="lg:hidden"><ArrowRight className="h-4 w-4" /></button>

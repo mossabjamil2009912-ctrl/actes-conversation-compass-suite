@@ -1,11 +1,15 @@
 // Draws the single-line diagram PDF (dark navy layout, same colours as the ACTES reference SLD).
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
+import { SANS_B64 } from "@/lib/report-assets/sans-regular";
+import { SANS_BOLD_B64 } from "@/lib/report-assets/sans-bold";
 import { FONT_B64 } from "@/lib/report-assets/font";
 import { LOGO_B64 } from "@/lib/report-assets/logo";
 import { shapeArabic } from "@/lib/arabic-shape";
+import type { ReportItems } from "@/lib/report-items";
 import type { SystemSpec } from "@/lib/pvsyst-calc";
 import { design, PANEL } from "@/lib/sld-calc";
+import { kwpText } from "@/lib/pvsyst-calc";
 
 const W = 1300, H = 460;
 const hex = (h: string) => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
@@ -47,13 +51,13 @@ function panelIcon(c: C, x: number, y: number) {
   }
 }
 
-export async function buildSld(name: string, spec: SystemSpec, when = new Date()): Promise<Uint8Array> {
+export async function buildSld(name: string, spec: SystemSpec, when = new Date(), items: ReportItems = {}): Promise<Uint8Array> {
   const d = design(spec);
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
   const p = doc.addPage([W, H]);
-  const c: C = { p, f: await doc.embedFont(StandardFonts.Helvetica), b: await doc.embedFont(StandardFonts.HelveticaBold) };
-  const u = await doc.embedFont(b64(FONT_B64), { subset: true });
+  const c: C = { p, f: await doc.embedFont(b64(SANS_B64), { subset: false }), b: await doc.embedFont(b64(SANS_BOLD_B64), { subset: false }) };
+  const u = await doc.embedFont(b64(FONT_B64), { subset: false });
   const logo = await doc.embedPng(b64(LOGO_B64));
   doc.setTitle(`${name} - SLD`); doc.setAuthor("ACTES");
   p.drawRectangle({ x: 0, y: 0, width: W, height: H, color: BG });
@@ -62,37 +66,35 @@ export async function buildSld(name: string, spec: SystemSpec, when = new Date()
   p.drawRectangle({ x: W - lw - 22, y: H - lh - 16, width: lw + 12, height: lh + 12, color: WHITE });
   p.drawImage(logo, { x: W - lw - 16, y: H - lh - 10, width: lw, height: lh });
   const date = `${String(when.getDate()).padStart(2, "0")}/${String(when.getMonth() + 1).padStart(2, "0")}/${when.getFullYear()}`;
-  const nm = shapeArabic(name);
-  p.drawText(nm, { x: W - lw - 26 - u.widthOfTextAtSize(nm, 10), y: Y(22), size: 10, font: u, color: WHITE });
   t(c, `Single Line Diagram — ${date}`, W - lw - 26, 36, 7, MUTED, false, "r");
 
   // ---- DC side
-  t(c, `DC SIDE — PV ARRAY ${f1(d.kwp)} kWp`, 28, 28, 9, DC, true);
+  t(c, `DC SIDE — PV ARRAY ${kwpText(d.kwp)} kWp`, 28, 28, 9, DC, true);
   const shown = Math.min(6, d.strings);
   const dcX = 258, dcY = 42, dcW = 120, dcH = 215;
   for (let i = 0; i < shown; i++) {
     const y = 48 + i * 36;
     panelIcon(c, 28, y);
-    t(c, `String ${i + 1} — ${d.perString} x ${PANEL.w} Wp`, 108, y + 2, 6.5);
+    t(c, `String ${i + 1} — ${d.perString} x ${d.panelW} Wp`, 108, y + 2, 6.5);
     line(c, 104, y + 10, dcX, y + 10, DC, 1.2);
     t(c, "+", 110, y + 21, 6.5, DC, true); t(c, "–", 122, y + 21, 6.5, WHITE);
   }
   badge(c, 196, 48 + Math.min(2, shown - 1) * 36 + 5, d.drops.string, 3);
   t(c, `typical — total ${d.strings} strings x ${d.perString} modules (${d.panels} modules)`, 28, 48 + shown * 36 + 6, 6, MUTED);
   line(c, dcX + 2, 52, dcX + 2, 48 + shown * 36 - 18, DC, 1.6);
-  box(c, dcX, dcY, dcW, dcH, "DC PROTECTION BOARD", [`${d.strings} Way — IP65 UV`, "Fuse gPV 32 A / 1000 V DC", "DC Isolator (load break)", "Icu 10 kA", "DC SPD Type 2"], AC);
+  box(c, dcX, dcY, dcW, dcH, "DC PROTECTION BOARD", items.dcBox?.length ? items.dcBox.slice(0, 5) : [`${d.strings} Way`, "As per quote"], AC);
   for (let i = 0; i < 6; i++) c.p.drawRectangle({ x: dcX + dcW - 18, y: Y(70 + i * 30), width: 6, height: 14, borderColor: WHITE, borderWidth: 0.6 });
 
   // ---- Battery
   const bx = 185, by = 252;
   box(c, bx, by, 152, 55, "BATTERY BANK", d.batCount ? [`${d.batCount} x ${d.batModule} kWh = ${d.batKwh} kWh`, `Nominal ${d.batV} V DC`, `Max current ≈ ${d.batI} A`.replace("≈", "~")] : ["No battery"], DC);
-  t(c, PANEL.model, 28, by + 52, 6, MUTED);
+  t(c, items.battery?.model ? `${items.battery.brand} ${items.battery.model}${items.battery.qty > 1 ? " x " + items.battery.qty : ""}` : "", 28, by + 52, 6, MUTED);
 
   // ---- Inverter
   const ix = 466, iy = 114, iw = 150, ih = 76;
   t(c, `STRING CHECK: Voc ${d.voc} V within ${d.mppt.min}–${d.mppt.max} V`, ix + iw / 2 - 10, 104, 6, d.vocOk ? MUTED : DC, false, "c");
   box(c, ix, iy, iw, ih, `PV INVERTER — ${ph}`, [`${d.invCount} x ${d.kw} kW = ${d.totalKw} kW`, `MPPT inputs: ${d.mpptInputs}`, `MPPT: ${d.mppt.min}–${d.mppt.max} V`, `BAT port: ${d.batV} V DC`], AC);
-  t(c, `Solis ${d.kw}K ${ph} Hybrid`, ix + iw / 2, iy + ih + 10, 6.5, MUTED, false, "c");
+  t(c, items.inverter ? `${items.inverter.brand} ${items.inverter.model}`.trim() : `${d.kw}K ${ph} Hybrid`, ix + iw / 2, iy + ih + 10, 6.5, MUTED, false, "c");
   d.mpptMap.forEach((ids, i) => {
     const y = 140 + i * 8;
     line(c, dcX + dcW, y, ix, y, DC, 1.2); dot(c, dcX + dcW, y, DC, 1.8);
@@ -113,14 +115,14 @@ export async function buildSld(name: string, spec: SystemSpec, when = new Date()
   t(c, "GRID OUT", ix + iw + 6, 116, 6, AC);
   line(c, ix + iw, 152, ax, 152, AC, 1.4); dot(c, ix + iw, 152, AC);
   t(c, "W4", 652, 134, 7, AC, true); t(c, `L1 L2 L3 N · ${d.acMm2} mm²`, ix + iw + 4, 146, 5.5, MUTED);
-  c.p.drawRectangle({ x: 660, y: Y(160), width: 14, height: 14, borderColor: AC, borderWidth: 1 }); t(c, "RCD-B", 667, 170, 5.5, AC, false, "c");
-  box(c, ax, ay, aw, ah, "AC OUTPUT BOARD (GRID)", [`Main ${d.acBreaker} A ${d.three ? "4P" : "2P"} — IP54`, d.three ? "L1 / L2 / L3 / N / PE" : "L / N / PE", "Icu 15 kA", `RCD Type B 30 mA ${d.three ? "4P" : "2P"}`, "AC SPD Type 2"], AC);
+  if (items.rcd) { c.p.drawRectangle({ x: 660, y: Y(160), width: 14, height: 14, borderColor: AC, borderWidth: 1 }); t(c, "RCD-B", 667, 170, 5.5, AC, false, "c"); }
+  box(c, ax, ay, aw, ah, "AC OUTPUT BOARD (GRID)", [`Main ${d.acBreaker} A ${d.three ? "4P" : "2P"} — IP54`, d.three ? "L1 / L2 / L3 / N / PE" : "L / N / PE", "Icu 15 kA", ...(items.rcd ? [`RCD Type B 30 mA ${d.three ? "4P" : "2P"}`] : []), ...(items.spd ? ["AC SPD Type 2"] : [])], AC);
   badge(c, 630, 176, d.drops.w4, 1.5);
   // EPS
   const ey = 220;
   line(c, ix + iw, 178, 630, 178, AC, 1.2); line(c, 630, 178, 630, ey + 20, AC, 1.2); line(c, 630, ey + 20, ax, ey + 20, AC, 1.2);
   t(c, "EPS / BACKUP", 636, 196, 6, AC); t(c, "COMM", bus + 28, 230, 6, COM);
-  box(c, ax, ey, aw, 40, "EPS OUTPUT BOARD", [`MCB ${d.acBreaker} A + RCD 30 mA`, "AC SPD Type 2"], AC);
+  box(c, ax, ey, aw, 40, "EPS OUTPUT BOARD", [`MCB ${d.acBreaker} A${items.rcd ? " + RCD 30 mA" : ""}`, ...(items.spd ? ["AC SPD Type 2"] : [])], AC);
   badge(c, 636, ey + 26, d.drops.eps, 1.5);
   // W5 -> meter -> grid
   const mx = 1050, gx = 1100;
@@ -147,11 +149,11 @@ export async function buildSld(name: string, spec: SystemSpec, when = new Date()
   line(c, 28, ge, W - 28, ge, YEL, 2.2); line(c, 28, ge - 1.5, W - 28, ge - 1.5, EARTH, 1);
   t(c, "LPS DOWN CONDUCTOR 50 mm²".replace("²", "2"), 28, 352, 5.5, EARTH, true);
   t(c, "PE — MAIN EARTHING BUS 1x16 mm2 (frames 1x6 mm2) — TN-S", 28, 380, 7, EARTH, true);
-  const taps: [number, string][] = [[70, "ARRAY FRAMES 6 mm2"], [300, "DC BOARD + SPD"], [520, "INVERTER CHASSIS"], [760, "AC BOARD + SPD"], [1130, "LOADS PANEL PE"]];
+  const taps: [number, string][] = [[70, "ARRAY FRAMES 6 mm2"], [300, items.spd ? "DC BOARD + SPD" : "DC BOARD"], [520, "INVERTER CHASSIS"], [760, items.spd ? "AC BOARD + SPD" : "AC BOARD"], [1130, "LOADS PANEL PE"]];
   for (const [x, s] of taps) { line(c, x, ge - 22, x, ge, EARTH, 0.8, [2, 2]); dot(c, x, ge, EARTH); t(c, s, x, ge + 14, 5.5, EARTH, false, "c"); }
   c.p.drawRectangle({ x: 380, y: Y(ge + 8), width: 130, height: 16, color: BG, borderColor: EARTH, borderWidth: 1.2 });
   t(c, "MAIN EARTH BAR (MEB) — Cu 25x3 mm", 445, ge + 3, 6, EARTH, true, "c");
-  t(c, "SPD TYPE I+II — DC", 300, 340, 5.5, EARTH, true, "c"); t(c, "SPD TYPE I+II — AC", 760, 340, 5.5, EARTH, true, "c");
+  if (items.spd) { t(c, "SPD TYPE I+II — DC", 300, 340, 5.5, EARTH, true, "c"); t(c, "SPD TYPE I+II — AC", 760, 340, 5.5, EARTH, true, "c"); }
   const px = W - 70;
   line(c, px, ge, px, ge + 18, EARTH, 1.2);
   [16, 10, 5].forEach((w, i) => line(c, px - w, ge + 18 + i * 4, px + w, ge + 18 + i * 4, EARTH, 1.2));

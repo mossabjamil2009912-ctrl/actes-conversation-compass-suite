@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { PdfView } from "@/components/PdfView";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Eye, Send, Phone, Upload, Check, Trash2, X } from "lucide-react";
@@ -14,7 +15,7 @@ const TITLES = BOT_PRESETS.map((p) => p.title);
 
 export function useReports(pw: string) {
   const list = useServerFn(listReportRequests);
-  return useQuery(offlineQuery({ queryKey: ["reports"], queryFn: () => list({ data: { pw } }), refetchInterval: 30000 }));
+  return useQuery(offlineQuery({ queryKey: ["reports"], queryFn: () => list({ data: { pw } }), refetchInterval: 5000 }));
 }
 
 function toB64(f: File) {
@@ -26,7 +27,7 @@ function toB64(f: File) {
   });
 }
 
-export function Reports({ pw }: { pw: string }) {
+export function Reports({ pw, autoOpenId, onAutoOpened }: { pw: string; autoOpenId?: string | null; onAutoOpened?: () => void }) {
   const { data, refetch } = useReports(pw);
   const requests = data?.requests ?? [];
   const files = data?.files ?? [];
@@ -49,6 +50,15 @@ export function Reports({ pw }: { pw: string }) {
       await refetch();
     });
   }
+
+  useEffect(() => {
+    if (!autoOpenId) return;
+    const r = requests.find((x) => x.id === autoOpenId);
+    if (!r) return;
+    onAutoOpened?.();
+    void openPreview(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenId, requests]);
 
   async function run(key: string, fn: () => Promise<unknown>) {
     setBusy(key); setErr("");
@@ -118,6 +128,7 @@ export function Reports({ pw }: { pw: string }) {
                 </div>
                 <span dir="ltr" className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Phone className="h-3 w-3" />+{r.phone}</span>
                 {r.system_label && <p className="mt-1 text-xs">المنظومة: {r.system_label}</p>}
+                {Array.isArray((r as { loads?: unknown }).loads) && <p className="mt-1 text-xs font-semibold text-primary">⏱ أحمال مفصلة بالساعة (24h) — {((r as { loads: number[] }).loads).reduce((a, b) => a + (+b || 0), 0).toFixed(1)} ك.و.س/يوم</p>}
                 {r.kind === "pvsyst" && (r.city || r.azimuth || r.tilt != null) && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {[r.city && CITY_AR[r.city], r.azimuth && `الاتجاه: ${DIR_LABEL[r.azimuth as Direction] ?? r.azimuth}`, `الميلان: ${r.tilt != null ? `${r.tilt}°` : "الأنسب"}`].filter(Boolean).join(" · ")}
@@ -135,7 +146,7 @@ export function Reports({ pw }: { pw: string }) {
                       </button>
                       
                       <button disabled={!ready || busy === r.id} onClick={() => {
-                        if (confirm("إرسال التقرير للعميل على واتساب؟")) run(r.id, async () => { await send({ data: { pw, id: r.id } }); await refetch(); });
+                        run(r.id, async () => { await send({ data: { pw, id: r.id } }); await refetch(); });
                       }} className="flex items-center justify-center gap-1 rounded-lg bg-primary py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
                         <Send className="h-4 w-4" />إرسال
                       </button>
@@ -160,10 +171,10 @@ export function Reports({ pw }: { pw: string }) {
               <b className="flex-1 truncate text-sm">{preview.title}</b>
               <button onClick={closePreview} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
-            <iframe title="معاينة التقرير" src={preview.url} className="min-h-0 w-full flex-1 bg-background" />
+            <PdfView url={preview.url} />
             <div className="grid grid-cols-2 gap-2 border-t p-2">
               <button disabled={!preview.pending || busy === preview.id} onClick={() => {
-                if (confirm("إرسال التقرير للعميل على واتساب؟")) run(preview.id, async () => { await send({ data: { pw, id: preview.id } }); closePreview(); await refetch(); });
+                run(preview.id, async () => { await send({ data: { pw, id: preview.id } }); closePreview(); await refetch(); });
               }} className="flex items-center justify-center gap-1 rounded-md bg-primary py-2 text-sm font-bold text-primary-foreground disabled:opacity-50"><Send className="h-4 w-4" />{preview.pending ? "إرسال" : "تم الإرسال"}</button>
               <button onClick={closePreview} className="flex items-center justify-center gap-1 rounded-md bg-muted py-2 text-sm font-bold"><X className="h-4 w-4" />إغلاق</button>
             </div>

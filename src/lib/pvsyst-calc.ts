@@ -45,7 +45,9 @@ export function parseTilt(v: string | number | null | undefined): number | null 
 export type SiteData = { name: string; lat: number; lon: number; alt: number; tilt: number; dir: Direction; globHor: number[]; diffHor: number[]; tAmb: number[]; globInc: number[]; source: string };
 export const SANAA_SITE: SiteData = { name: "Sanaa", lat: SITE.lat, lon: SITE.lon, alt: SITE.alt, tilt: SITE.tilt, dir: "ns", globHor: REF.globHor, diffHor: REF.diffHor, tAmb: REF.tAmb, globInc: REF.globInc, source: "Meteonorm 9.0" };
 
-export type SystemSpec = { kw: number; invCount: number; three: boolean; panels: number; batKwh: number };
+export type SystemSpec = { kw: number; invCount: number; three: boolean; panels: number; batKwh: number; panelW?: number; loads?: number[] | null };
+/** Exact kWp text, no rounding (float noise only). */
+export const kwpText = (n: number) => String(Number(n.toFixed(6)));
 
 const digits = (s: string) => s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660));
 
@@ -55,7 +57,8 @@ export function parseSystem(label: string | null | undefined): SystemSpec | null
   const t = digits(label);
   const num = (re: RegExp) => { const m = t.match(re); return m?.[1] ? parseFloat(m[1]) : 0; };
   const kw = num(/(\d+(?:\.\d+)?)\s*كيلو(?!\s*\))/);
-  const panels = num(/ألواح:?\s*(\d+)/) || num(/(\d+)\s*(?:لوح|ألواح)/);
+  // Count is the number written right before "ألواح" (e.g. "8 ألواح 720W"), else "ألواح: 150"; never the wattage.
+  const panels = num(/(\d+)\s*(?:لوح|ألواح)/) || num(/ألواح:\s*(\d+)(?!\s*W)/i);
   if (!kw || !panels) return null;
   return {
     kw,
@@ -63,20 +66,36 @@ export function parseSystem(label: string | null | undefined): SystemSpec | null
     three: /3\s*فاز|ثلاث/.test(t),
     panels,
     batKwh: num(/بطاري(?:ة|ات):?\s*(\d+(?:\.\d+)?)/),
+    // Panel wattage as written (e.g. "595W"), else the default module.
+    panelW: num(/(\d{3,4})\s*W\b/i) || PANEL_W,
   };
+}
+
+/** Tilt ("ميلان 15" / "زاوية 15°") and direction ("جنوب وشمال", "شرق") written in a request's text. */
+export function parseOrientation(label: string | null | undefined): { tilt: number | null; dir: Direction | null } {
+  const t = digits(label ?? "");
+  const m = t.match(/(?:ميل(?:ان)?|زاوية)[^\d]{0,12}(\d+(?:[.،]\d+)?)/) || t.match(/(\d+(?:\.\d+)?)\s*°/);
+  const tilt = m?.[1] ? parseTilt(m[1]) : null;
+  const has = (w: string) => t.includes(w);
+  const dir: Direction | null = has("جنوب") && has("شمال") ? "ns" : has("شرق") && has("غرب") ? "ew"
+    : has("جنوب") ? "s" : has("شمال") ? "n" : has("شرق") ? "e" : has("غرب") ? "w" : null;
+  return { tilt, dir };
 }
 
 const r = (n: number, d = 0) => Math.round(n * 10 ** d) / 10 ** d;
 
 export function simulate(s: SystemSpec, site: SiteData = SANAA_SITE) {
-  const kwp = r((s.panels * PANEL_W) / 1000, 2);
+  const kwp = (s.panels * (s.panelW || PANEL_W)) / 1000;
   const toUser = REF.produced / REF.eArray.reduce((a, b) => a + b, 0);
   // Output to the user = kWp × plane irradiation × PR (the reference run's PR: 285.12 × 2338.5 × 0.8651 = 576,816 kWh).
   const eGrid = site.globInc.map((g) => r(kwp * g * PR));
   const eArray = eGrid.map((e) => r(e / toUser));
   const globEff = site.globInc.map((g, i) => r(g * (REF.globEff[i]! / REF.globInc[i]!), 1));
   const produced = eGrid.reduce((a, b) => a + b, 0);
-  const dailyNeed = Math.min(produced / 365, Math.max(s.batKwh * 0.9 + kwp * 1.5, kwp * 2));
+  // Customer's own 24 hourly loads (kW) give the real daily need; otherwise estimate from the system size.
+  const hourly = s.loads && s.loads.length === 24 && s.loads.some((v) => v > 0) ? s.loads.map((v) => Math.max(0, +v || 0)) : null;
+  const loadDay = hourly ? hourly.reduce((a, b) => a + b, 0) : 0;
+  const dailyNeed = hourly ? loadDay : Math.min(produced / 365, Math.max(s.batKwh * 0.9 + kwp * 1.5, kwp * 2));
   const eUser = DAYS.map((d) => r(dailyNeed * d));
   const used = eUser.reduce((a, b) => a + b, 0);
   const prMonth = site.globInc.map(() => r(PR, 3));
@@ -89,7 +108,8 @@ export function simulate(s: SystemSpec, site: SiteData = SANAA_SITE) {
     site, globEff, kwp, acKw, produced, used,
     specific: r(produced / kwp),
     pr: r(PR * 100, 2),
-    sf: 100,
+    sf: hourly ? r(Math.min(100, (produced / used) * 100), 2) : 100,
+    hourly, loadDay: r(loadDay, 2), loadPeak: hourly ? Math.max(...hourly) : 0,
     pnomRatio: r(kwp / acKw, 2),
     eArray, eGrid, eUser, prMonth,
     needsMwh: eUser.map((e) => r(e / 1000, 2)),

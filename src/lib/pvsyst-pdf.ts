@@ -1,10 +1,13 @@
 // Builds the simulation report PDF (same layout/colours as the reference PVsyst report).
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type PDFImage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
+import { SANS_B64 } from "@/lib/report-assets/sans-regular";
+import { SANS_BOLD_B64 } from "@/lib/report-assets/sans-bold";
 import { FONT_B64 } from "@/lib/report-assets/font";
 import { LOGO_B64 } from "@/lib/report-assets/logo";
 import { shapeArabic } from "@/lib/arabic-shape";
-import { SITE, MONTHS, LOSSES, PANEL_W, simulate, aspectsOf, SANAA_SITE, type SystemSpec, type Sim, type SiteData } from "@/lib/pvsyst-calc";
+import type { ReportItems } from "@/lib/report-items";
+import { SITE, MONTHS, LOSSES, PANEL_W, simulate, kwpText, aspectsOf, SANAA_SITE, type SystemSpec, type Sim, type SiteData } from "@/lib/pvsyst-calc";
 import { PVSYST_LOGO_B64 } from "@/lib/report-assets/pvsyst-logo";
 
 const W = 595, H = 842, M = 40;
@@ -56,7 +59,7 @@ function bars(c: Ctx, p: PDFPage, x: number, y: number, w: number, h: number, se
   txt(p, yl, x, y - 16, c.f, 5, GREY);
 }
 
-export async function buildReport(name: string, spec: SystemSpec, site: SiteData = SANAA_SITE, when = new Date()): Promise<Uint8Array> {
+export async function buildReport(name: string, spec: SystemSpec, site: SiteData = SANAA_SITE, when = new Date(), items: ReportItems = {}): Promise<Uint8Array> {
   const s: Sim = simulate(spec, site);
   const az = aspectsOf(site.dir).map((a) => (a + 540) % 360);
   const orient = (i: number): [string, string][] => az[i] == null ? [["", ""], ["", ""]] : [[`Orientation #${i + 1} - Fixed plane`, ""], ["Tilt/Azimuth", `${fmt(site.tilt, 1)} / ${az[i]} °`]];
@@ -66,12 +69,17 @@ export async function buildReport(name: string, spec: SystemSpec, site: SiteData
   const date = `${String(when.getDate()).padStart(2, "0")}/${String(when.getMonth() + 1).padStart(2, "0")}/${String(when.getFullYear()).slice(2)} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
   const c: Ctx = {
     doc, name: shapeArabic(name), src: site.source, date, total: 6,
-    f: await doc.embedFont(StandardFonts.Helvetica), b: await doc.embedFont(StandardFonts.HelveticaBold),
-    u: await doc.embedFont(b64(FONT_B64), { subset: true }), logo: await doc.embedPng(b64(LOGO_B64)), pv: await doc.embedPng(b64(PVSYST_LOGO_B64)),
-    variant: `Hybrid System ${Math.round(s.kwp)} KWp`,
+    f: await doc.embedFont(b64(SANS_B64), { subset: false }), b: await doc.embedFont(b64(SANS_BOLD_B64), { subset: false }),
+    u: await doc.embedFont(b64(FONT_B64), { subset: false }), logo: await doc.embedPng(b64(LOGO_B64)), pv: await doc.embedPng(b64(PVSYST_LOGO_B64)),
+    variant: `Hybrid System ${kwpText(s.kwp)} KWp`,
   };
   doc.setTitle(`${name} - Simulation report`); doc.setAuthor("ACTES");
-  const invName = `Solis ${spec.kw} kW${spec.three ? " 3-phase" : ""}`;
+  const invBrand = items.inverter?.brand || "-";
+  const invName = items.inverter?.model || `${spec.kw} kW${spec.three ? " 3-phase" : ""}`;
+  const panelBrand = items.panel?.brand || "Suntech";
+  const panelModel = items.panel?.model || `${spec.panelW || PANEL_W} Wp`;
+  const batBrand = items.battery?.brand || "-";
+  const batModel = items.battery?.model ? `${items.battery.model}${items.battery.qty > 1 ? ` x ${items.battery.qty}` : ""}` : "-";
 
   // 1 — cover
   {
@@ -99,7 +107,7 @@ export async function buildReport(name: string, spec: SystemSpec, site: SiteData
     txt(p, "Grid-Connected System", M + 8, y - 16, c.b, 7); txt(p, "Sheds on a building", M + 175, y - 16, c.b, 7);
     rows(c, p, M + 8, y - 30, orient(0), 120);
     rows(c, p, M + 175, y - 30, orient(1), 120);
-    txt(p, "PV Array", M + 8, y - 62, c.b, 7); rows(c, p, M + 8, y - 72, [["Nb. of modules", `${spec.panels} units`], ["Pnom total", `${fmt(s.kwp, 1)} kWp`]], 110);
+    txt(p, "PV Array", M + 8, y - 62, c.b, 7); rows(c, p, M + 8, y - 72, [["Nb. of modules", `${spec.panels} units`], ["Pnom total", `${kwpText(s.kwp)} kWp`]], 110);
     txt(p, "Inverters", M + 175, y - 62, c.b, 7); rows(c, p, M + 175, y - 72, [["Nb. of units", `${spec.invCount} units`], ["Total power", `${s.acKw} kWac`], ["Pnom ratio", fmt(s.pnomRatio, 2)]], 110);
     txt(p, "Battery pack", M + 350, y - 62, c.b, 7); rows(c, p, M + 350, y - 72, [["Storage strategy", "Self-consumption"], ["Voltage", `${s.battery.v} V`], ["Capacity", `${fmt(s.battery.ah)} Ah`], ["Energy", `${s.battery.kwh} kWh`]], 150);
     y -= 145; box(c, p, "Results summary", y, 50);
@@ -113,7 +121,8 @@ export async function buildReport(name: string, spec: SystemSpec, site: SiteData
   {
     const p = page(c, 3);
     let y = H - 95;
-    box(c, p, "General parameters", y, 120);
+    const extra = s.hourly ? 30 : 0;
+    box(c, p, "General parameters", y, 120 + extra);
     rows(c, p, M + 8, y - 18, [...orient(0), ["Nb. of sheds", `${az.length === 1 ? s.shedsSouth + s.shedsNorth : s.shedsSouth} units`], ["Sheds spacing", "5.00 m"], ["Sensitive width", "2.38 m"], ["GCR", "48.1 %"]], 150);
     rows(c, p, M + 190, y - 18, [...orient(1), ["Nb. of sheds", az[1] == null ? "-" : `${s.shedsNorth} units`], ["Sheds spacing", "5.00 m"], ["Sensitive width", "2.38 m"], ["GCR", "48.1 %"]], 150);
     rows(c, p, M + 370, y - 18, [["Models used", ""], ["Transposition", "Perez"], ["Diffuse", "Perez, Meteonorm"], ["Horizon", "Free Horizon"], ["Bifaciality factor", "80 %"]], 130);
@@ -123,13 +132,21 @@ export async function buildReport(name: string, spec: SystemSpec, site: SiteData
       txt(p, m, M + 8 + i * cw + cw / 2, y - 100, c.b, 6, INK, "c");
       txt(p, i < 12 ? fmt(s.needsMwh[i]!, 2) : fmt(s.used / 1000, 1), M + 8 + i * cw + cw / 2, y - 110, c.f, 6, INK, "c");
     });
-    y -= 140; box(c, p, "PV Array Characteristics", y, 175);
+    if (s.hourly) {
+      txt(p, `Customer hourly loads (kW) - Daily ${fmt(s.loadDay, 2)} kWh, Peak ${fmt(s.loadPeak, 2)} kW`, M + 8, y - 122, c.b, 7);
+      const hw = (W - 2 * M - 16) / 24;
+      s.hourly.forEach((v, i) => {
+        txt(p, String(i).padStart(2, "0"), M + 8 + i * hw + hw / 2, y - 132, c.b, 5, INK, "c");
+        txt(p, fmt(v, 1), M + 8 + i * hw + hw / 2, y - 141, c.f, 5, INK, "c");
+      });
+    }
+    y -= 140 + extra; box(c, p, "PV Array Characteristics", y, 175);
     txt(p, "PV module", M + 8, y - 16, c.b, 7);
-    rows(c, p, M + 8, y - 26, [["Manufacturer", "Suntech"], ["Model", "STP720S-D66-Nsh+"], ["Unit Nom. Power", `${PANEL_W} Wp`], ["Number of PV modules", `${spec.panels} units`], ["Nominal (STC)", `${fmt(s.kwp, 1)} kWp`], ["Modules", `${s.strings} string x ${s.series} in series`], ["Module area", `${fmt(s.area)} m²`]], 200);
+    rows(c, p, M + 8, y - 26, [["Manufacturer", panelBrand], ["Model", panelModel], ["Unit Nom. Power", `${spec.panelW || PANEL_W} Wp`], ["Number of PV modules", `${spec.panels} units`], ["Nominal (STC)", `${kwpText(s.kwp)} kWp`], ["Modules", `${s.strings} string x ${s.series} in series`], ["Module area", `${fmt(s.area)} m²`]], 200);
     txt(p, "Inverter", M + 270, y - 16, c.b, 7);
-    rows(c, p, M + 270, y - 26, [["Manufacturer", "Solis"], ["Model", invName], ["Unit Nom. Power", `${spec.kw} kWac`], ["Number of inverters", `${spec.invCount} units`], ["Total power", `${s.acKw} kWac`], ["Pnom ratio (DC:AC)", fmt(s.pnomRatio, 2)]], 230);
+    rows(c, p, M + 270, y - 26, [["Manufacturer", invBrand], ["Model", invName], ["Unit Nom. Power", `${spec.kw} kWac`], ["Number of inverters", `${spec.invCount} units`], ["Total power", `${s.acKw} kWac`], ["Pnom ratio (DC:AC)", fmt(s.pnomRatio, 2)]], 230);
     txt(p, "Battery", M + 8, y - 110, c.b, 7);
-    rows(c, p, M + 8, y - 120, [["Storage", "Self-consumption"], ["Voltage", `${s.battery.v} V`], ["Nominal Capacity (C10)", `${fmt(s.battery.ah)} Ah`], ["Nominal energy", `${s.battery.kwh} kWh`], ["Operating SOC limits", "98.0 / 10.0 %"]], 200);
+    rows(c, p, M + 8, y - 120, [["Manufacturer", batBrand], ["Model", batModel], ["Storage", "Self-consumption"], ["Voltage", `${s.battery.v} V`], ["Nominal Capacity (C10)", `${fmt(s.battery.ah)} Ah`], ["Nominal energy", `${s.battery.kwh} kWh`], ["Operating SOC limits", "98.0 / 10.0 %"]], 200);
     txt(p, "Array losses", M + 270, y - 110, c.b, 7);
     rows(c, p, M + 270, y - 120, [["Array soiling loss fraction", "3.0 %"], ["LID loss fraction", "2.00 %"], ["Module quality loss", "-0.75 %"], ["Module mismatch loss", "2.00 % at MPP"], ["Unavailability (time fraction)", "2.0 %"]], 230);
   }

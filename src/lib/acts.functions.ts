@@ -30,6 +30,7 @@ async function customerFor(phone: string, name: string | null, city: string | nu
   return id;
 }
 
+const LOAD_SURVEY = "قياس الأحمال";
 // ---------- Public ----------
 export const actsQuoteRequest = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({
@@ -43,7 +44,13 @@ export const actsQuoteRequest = createServerFn({ method: "POST" })
     const id = await customerFor(data.phone, data.name, data.city, msg, "quote");
     const sb = await db();
     for (const kind of data.reports) {
-      await sb.from("report_requests").insert({ phone: digits(data.phone), customer_id: id, name: data.name, system_label: data.system, kind, city: null });
+      const { data: rq } = await sb.from("report_requests").insert({ phone: digits(data.phone), customer_id: id, name: data.name, system_label: data.system, kind, city: null }).select("*").single();
+      const { prewarmReport } = await import("@/lib/crm.functions");
+      void prewarmReport(sb, rq);
+    }
+    if (data.system.includes("قياس أحمال")) {
+      const loc = data.system.split("الموقع:")[1]?.trim() || data.city;
+      await sb.from("acts_service_requests").insert({ phone: digits(data.phone), customer_id: id, name: data.name, service: LOAD_SURVEY, location: loc, description: data.system });
     }
     return { ok: true };
   });
@@ -216,12 +223,14 @@ export const actsKwhPrice = createServerFn({ method: "POST" })
   });
 
 export const actsReportRequest = createServerFn({ method: "POST" })
-  .inputValidator((d) => z.object({ kind: z.enum(["pvsyst", "sld"]), name: s(120), phone: Phone, city: s(80), system: z.string().trim().min(1).max(300), price: z.number().optional() }).parse(d))
+  .inputValidator((d) => z.object({ kind: z.enum(["pvsyst", "sld"]), name: s(120), phone: Phone, city: s(80), system: z.string().trim().min(1).max(300), price: z.number().optional(), tilt: z.union([z.string(), z.number()]).optional().nullable(), direction: z.string().max(4).optional().nullable(), loads: z.array(z.coerce.number().min(0).max(100000)).length(24).optional().nullable() }).parse(d))
   .handler(async ({ data }) => {
     const msg = `📱 طلب ${data.kind === "pvsyst" ? "تقرير PVsyst" : "مخطط SLD"} من تطبيق ACTS\nالمنظومة: ${data.system}`;
     const id = await customerFor(data.phone, data.name, data.city, msg, "quote");
     const sb = await db();
-    await sb.from("report_requests").insert({ phone: digits(data.phone), customer_id: id, name: data.name, system_label: data.system, kind: data.kind, city: data.city });
+    const { data: rq } = await sb.from("report_requests").insert({ phone: digits(data.phone), customer_id: id, name: data.name, system_label: data.system, kind: data.kind, city: data.city, tilt: data.tilt != null && data.tilt !== "" && isFinite(+data.tilt) ? +data.tilt : null, azimuth: ["s", "n", "e", "w", "ns", "ew"].includes(data.direction ?? "") ? (data.direction ?? null) : null, loads: data.loads?.some((v) => v > 0) ? data.loads : null }).select("*").single();
+    const { prewarmReport } = await import("@/lib/crm.functions");
+    void prewarmReport(sb, rq);
     return { ok: true };
   });
 

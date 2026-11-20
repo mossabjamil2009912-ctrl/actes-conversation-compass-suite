@@ -129,14 +129,23 @@ export const ensureCustomerByPhone = createServerFn({ method: "POST" })
 export const sendAttachment = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({
     pw: z.string(), id: z.string().uuid(), text: z.string().max(1024).default(""),
-    file_name: z.string().min(1).max(200), mime: z.string().max(120), b64: z.string().max(23_000_000),
+    file_name: z.string().min(1).max(200), mime: z.string().max(120), b64: z.string().max(23_000_000).default(""), url: z.string().url().max(2000).optional(),
   }).parse(d))
   .handler(async ({ data }) => {
     check(data.pw);
     const { supabaseAdmin } = await import("@/lib/db.server");
     const { data: c, error } = await supabaseAdmin.from("customers").select("phone").eq("id", data.id).single();
     if (error || !c) throw new Error("العميل غير موجود");
-    const bin = Uint8Array.from(atob(data.b64), (ch) => ch.charCodeAt(0));
+    let bin: Uint8Array;
+    if (data.url) {
+      if (!/^https:\/\//.test(data.url)) throw new Error("رابط غير مسموح");
+      const r = await fetch(data.url);
+      if (!r.ok) throw new Error("تعذّر جلب الملف");
+      const ct = r.headers.get("content-type") || "";
+      if (ct) data.mime = ct.split(";")[0]!.trim();
+      bin = new Uint8Array(await r.arrayBuffer());
+      if (bin.length > 16 * 1024 * 1024) throw new Error("حجم الملف أكبر من 16MB");
+    } else bin = Uint8Array.from(atob(data.b64), (ch) => ch.charCodeAt(0));
     const ext = (data.file_name.split(".").pop() ?? "bin").replace(/[^A-Za-z0-9]/g, "").slice(0, 8) || "bin";
     const path = `${data.id}/${crypto.randomUUID()}.${ext}`;
     const up = await supabaseAdmin.storage.from("crm-attachments").upload(path, bin, { contentType: data.mime || "application/octet-stream" });
@@ -324,7 +333,7 @@ export const saveCatalogItem = createServerFn({ method: "POST" })
     name: z.string().trim().min(1).max(500),
     price: z.number().nonnegative().nullable(),
     unit: z.string().max(50).nullable(),
-    pdf_url: z.string().url().max(1000).nullable().or(z.literal("").transform(() => null)),
+    pdf_url: z.string().url().max(1000).or(z.string().regex(/^\/[^\s]*$/).max(1000)).nullable().or(z.literal("").transform(() => null)),
     active: z.boolean(),
     specs: z.array(z.string().max(1000)).max(200).optional(),
   }).parse(d))
@@ -467,8 +476,10 @@ export const openPresetReport = createServerFn({ method: "POST" })
     return { url: sig.data.signedUrl };
   });
 
-async function requestFile(supabaseAdmin: any, rq: { id: string; name: string | null; city?: string | null; lat?: number | null; lon?: number | null; tilt?: number | null; azimuth?: string | null; file_path: string | null; file_name: string | null; kind: string; system_label: string | null }) {
-  if (rq.file_path) return { path: rq.file_path, file_name: rq.file_name ?? "report.pdf" };
+export async function requestFile(supabaseAdmin: any, rq: { id: string; name: string | null; city?: string | null; lat?: number | null; lon?: number | null; tilt?: number | null; azimuth?: string | null; file_path: string | null; file_name: string | null; kind: string; system_label: string | null }) {
+  // Generated reports made before fonts were embedded (no "/v9-" in path) are rebuilt once.
+  const stale = !!rq.file_path && rq.file_path.startsWith("reports/requests/") && !rq.file_path.includes("/v9-") && (rq.kind === "sld" || rq.kind === "pvsyst");
+  if (rq.file_path && !stale) return { path: rq.file_path, file_name: rq.file_name ?? "report.pdf" };
   if (rq.kind === "sld") {
     // Draw the single-line diagram for this customer's own system and keep it with the request.
     const { parseSystem } = await import("@/lib/pvsyst-calc");
@@ -476,8 +487,9 @@ async function requestFile(supabaseAdmin: any, rq: { id: string; name: string | 
     if (spec) {
       const { buildSld } = await import("@/lib/sld-pdf");
       const name = (rq.name ?? "").trim() || "Customer";
-      const bin = await buildSld(name, spec);
-      const path = `reports/requests/${rq.id}/${crypto.randomUUID()}.pdf`;
+      const { reportItems } = await import("@/lib/report-items");
+      const bin = await buildSld(name, spec, new Date(), reportItems(rq.system_label));
+      const path = `reports/requests/${rq.id}/v9-${crypto.randomUUID()}.pdf`;
       const file_name = `${name.replace(/[\\/:*?"<>|]/g, "")}_SLD.pdf`;
       const up = await supabaseAdmin.storage.from("crm-attachments").upload(path, bin, { contentType: "application/pdf" });
       if (up.error) throw new Error("تعذّر حفظ المخطط");
@@ -491,18 +503,22 @@ async function requestFile(supabaseAdmin: any, rq: { id: string; name: string | 
     const spec = parseSystem(rq.system_label);
     if (spec) {
       const { buildReport } = await import("@/lib/pvsyst-pdf");
-      const { CITIES, SANAA_SITE } = await import("@/lib/pvsyst-calc");
+      const { CITIES, SANAA_SITE, parseOrientation } = await import("@/lib/pvsyst-calc");
       const name = (rq.name ?? "").trim() || "Customer";
-      const dir = (["s", "n", "e", "w", "ns", "ew"].includes(rq.azimuth ?? "") ? rq.azimuth : "s") as "s";
+      const fromText = parseOrientation(rq.system_label);
+      const dir = (["s", "n", "e", "w", "ns", "ew"].includes(rq.azimuth ?? "") ? rq.azimuth : fromText.dir ?? "s") as "s";
+      const tilt = rq.tilt ?? fromText.tilt;
       const city = CITIES[rq.city ?? ""];
       const loc = rq.lat != null && rq.lon != null ? { name: city?.name ?? "Site", lat: rq.lat, lon: rq.lon } : city ?? CITIES["sanaa"]!;
       let site = SANAA_SITE;
       try {
         const { fetchSite } = await import("@/lib/pvgis.server");
-        site = await fetchSite({ ...loc, tilt: rq.tilt ?? null, dir });
+        site = await fetchSite({ ...loc, tilt: tilt ?? null, dir });
       } catch (e) { console.error("PVGIS failed, using Sanaa reference data", e); }
-      const bin = await buildReport(name, spec, site);
-      const path = `reports/requests/${rq.id}/${crypto.randomUUID()}.pdf`;
+      const { reportItems } = await import("@/lib/report-items");
+      const loads = Array.isArray((rq as { loads?: unknown }).loads) ? ((rq as unknown as { loads: number[] }).loads) : null;
+      const bin = await buildReport(name, { ...spec, loads }, site, new Date(), reportItems(rq.system_label));
+      const path = `reports/requests/${rq.id}/v9-${crypto.randomUUID()}.pdf`;
       const file_name = `${name.replace(/[\\/:*?"<>|]/g, "")}_PVsyst.pdf`;
       const up = await supabaseAdmin.storage.from("crm-attachments").upload(path, bin, { contentType: "application/pdf" });
       if (up.error) throw new Error("تعذّر حفظ التقرير");
@@ -515,6 +531,11 @@ async function requestFile(supabaseAdmin: any, rq: { id: string; name: string | 
   const t = matchPreset(rq.system_label, rows.map((r) => r.preset_title));
   const f = rows.find((r) => r.preset_title === t);
   return f ? { path: f.path, file_name: f.file_name } : null;
+}
+
+/** Builds a new request's report right away so staff open it instantly; failures fall back to building on open. */
+export async function prewarmReport(supabaseAdmin: any, rq: any) {
+  try { if (rq) await requestFile(supabaseAdmin, rq); } catch (e) { console.error("report prewarm failed", e); }
 }
 
 export const uploadRequestReport = createServerFn({ method: "POST" })
@@ -738,4 +759,45 @@ export const saveFrontendUrl = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin.from("app_settings").upsert({ key: "frontend_url", value: 0, text_value: n.url, updated_at: new Date().toISOString() });
     if (error) return { ok: false, message: "تعذّر الحفظ — بقي الرابط السابق", url: await readFrontendUrl() };
     return { ok: true, message: "تم الحفظ — كل الأجهزة المفتوحة تتحول خلال دقيقة", url: n.url };
+  });
+
+export const openCustomerChat = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ pw: z.string(), phone: z.string().min(3).max(32), name: z.string().max(120).nullable() }).parse(d))
+  .handler(async ({ data }) => {
+    check(data.pw);
+    let phone = data.phone.replace(/\D/g, "").replace(/^00/, "");
+    if (/^0?7\d{8}$/.test(phone)) phone = "967" + phone.replace(/^0/, "");
+    const { supabaseAdmin } = await import("@/lib/db.server");
+    const tail = phone.slice(-9);
+    const { data: found } = await supabaseAdmin.from("customers").select("id").like("phone", `%${tail}`).limit(1);
+    if (found?.[0]) return { id: found[0].id as string };
+    const { data: row, error } = await supabaseAdmin.from("customers").insert({ phone, name: data.name } as never).select("id").single();
+    if (error) throw new Error(error.message);
+    return { id: (row as { id: string }).id };
+  });
+
+// Editable sizing equations ("المعادلات"), shared with the bot through bot-catalog (FORMULAS).
+export const getFormulas = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ pw: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    check(data.pw);
+    const { mergeFormulas } = await import("@/lib/formulas");
+    const { supabaseAdmin } = await import("@/lib/db.server");
+    const { data: r } = await supabaseAdmin.from("app_settings").select("text_value").eq("key", "formulas").maybeSingle();
+    let v: unknown = null;
+    try { v = r?.text_value ? JSON.parse(r.text_value) : null; } catch { v = null; }
+    return { formulas: mergeFormulas(v) };
+  });
+
+export const saveFormulas = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ pw: z.string(), code: z.string(), formulas: z.record(z.string(), z.unknown()) }).parse(d))
+  .handler(async ({ data }) => {
+    check(data.pw);
+    if (data.code !== "2027") throw new Error("رمز غير صحيح");
+    const { mergeFormulas } = await import("@/lib/formulas");
+    const f = mergeFormulas(data.formulas);
+    const { supabaseAdmin } = await import("@/lib/db.server");
+    const { error } = await supabaseAdmin.from("app_settings").upsert({ key: "formulas", value: 0, text_value: JSON.stringify(f), updated_at: new Date().toISOString() });
+    if (error) throw new Error(error.message);
+    return { formulas: f };
   });

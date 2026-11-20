@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { applyAutoRules, type CatItem } from "@/lib/auto-rules";
+import { applyEquations, type EqItem } from "@/lib/formulas";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Search, FilePlus2, Save, Minus, Plus, Trash2, Check, Zap, Battery, Sun, Box, ShieldCheck, Server, Home, Cpu, Cable, Wrench, Printer, History, Share2, X, Download } from "lucide-react";
-import { listCatalog, listCustomers, saveQuote, listQuotes, sendAttachment, ensureCustomerByPhone, uploadQuotePdf, getKwhPrice, setKwhPrice } from "@/lib/crm.functions";
+import { listCatalog, listCustomers, saveQuote, listQuotes, sendAttachment, ensureCustomerByPhone, uploadQuotePdf, getKwhPrice, setKwhPrice, getFormulas } from "@/lib/crm.functions";
 import { offlineQuery } from "@/lib/offline-cache";
 import { BOT_PRESETS } from "@/lib/bot-presets";
+import { F, applyFormulas, comKey } from "@/lib/formulas";
+import { inverterOptions, inverterForLoad, buildSystem, type InvPick } from "@/lib/sizing";
+import { lvChoices, lvCatalogItem, lvBatOf, LV_BAT_LABELS, type LvBatOpt } from "@/lib/lv-battery";
+import { applyStorage, hvCapacity, storageAvailable, STORAGE_LABELS, type StorageChoice } from "@/lib/storage";
 import logoClean from "@/assets/actes-logo-clean.png";
 
 type Row = Awaited<ReturnType<typeof listCatalog>>[number];
@@ -17,6 +22,7 @@ const TABLES: { k: string; t: string; i: typeof Zap }[] = [
   { k: "panels", t: "الألواح الشمسية", i: Sun },
   { k: "dc_boxes", t: "صناديق حماية DC", i: Box },
   { k: "ac_panel", t: "لوحات حماية AC", i: ShieldCheck },
+  { k: "combiner_panels", t: "لوحات التجميع", i: ShieldCheck },
   { k: "racks", t: "راكات وكبائن التخزين", i: Server },
   { k: "stands", t: "استندات المنظومات", i: Home },
   { k: "battery_controls", t: "كنترولات وحماية البطاريات", i: Cpu },
@@ -85,29 +91,50 @@ const com = (inv: string, invQty: number, ac: string, pv: number, mc4: number, s
   ...(s.bdc ? [["bat_protect_dc1500_250a", s.bdc] as [string, number]] : []),
   ["mc4_connector", mc4], ["cable_cu_1500v_10mm", 1],
 ];
-const S50 = "INV_SOLIS_50K_3P_HV", S125 = "INV_SOLIS_125K_3P_HV";
-const g50 = "منظومات تجارية 50 كيلو", g125 = "منظومات تجارية 125 كيلو";
+const S50 = "INV_SOLIS_50K_3P_HV", S80 = "INV_SOLIS_80K_3P_HV", S125 = "INV_SOLIS_125K_3P_HV";
+// HV systems = bot BIG_ROWS (kW, inverters, row, panels, DC lines, battery options) — 1:1 so app, ranges screen and bot share keys.
+const BIG_ROWS: [number, number, number, number, number, number][] = [
+  [50,1,1,75,6,4],[50,1,2,90,6,6],[50,1,3,105,8,8],[50,1,4,120,8,11],[50,2,1,150,10,8],[50,2,2,180,12,12],[50,2,3,210,14,16],[50,2,4,240,16,22],
+  [50,3,1,225,16,12],[50,3,2,270,18,18],[50,3,3,315,22,24],[50,3,4,360,24,33],[50,4,1,300,20,16],[50,4,2,360,24,24],[50,4,3,420,28,32],[50,4,4,480,32,44],
+  [50,5,1,375,26,20],[50,5,2,450,30,30],[50,5,3,525,36,40],[50,5,4,600,40,55],
+  [80,1,1,153,10,12],[80,1,2,187,12,14],[80,1,3,204,12,18],[80,2,1,306,18,24],[80,2,2,374,22,28],[80,2,3,408,24,36],[80,3,1,459,28,36],[80,3,2,561,34,42],[80,3,3,612,36,54],
+  [80,4,1,612,36,48],[80,4,2,748,44,56],[80,4,3,816,48,72],[80,5,1,765,46,60],[80,5,2,935,56,70],[80,5,3,1020,60,90],
+  [125,1,1,221,14,12],[125,1,2,255,16,14],[125,1,3,289,18,16],[125,1,4,323,20,18],[125,2,1,442,26,24],[125,2,2,510,30,28],[125,2,3,578,34,32],[125,2,4,646,38,36],
+  [125,3,1,663,40,36],[125,3,2,765,46,42],[125,3,3,867,52,48],[125,3,4,969,58,54],[125,4,1,884,52,48],[125,4,2,1020,60,56],[125,4,3,1156,68,64],[125,4,4,1292,76,72],
+  [125,5,1,1105,66,60],[125,5,2,1275,76,70],[125,5,3,1445,86,80],[125,5,4,1615,96,90],
+];
+const BIG_INV: Record<number, [string, number, number]> = { 50: [S50, 15, 5], 80: [S80, 17, 10], 125: [S125, 17, 15] };
+export const bigGroup = (kw: number, n: number) => `منظومات تجارية ${kw} كيلو · ${n} إنفرتر`;
 const COMMERCIAL: Preset[] = [
-  { type: "com", group: g50, title: "50 كيلو · 75 لوح · 4 بطارية هيثيوم (64 كيلو)", items: com(S50, 1, "ac_06", 75, 5, { dc: [["DCBOX_1500_6", 1]], hv: 4, ctrl: 1, bdc: 1 }) },
-  { type: "com", group: g50, title: "2× 50 كيلو · 150 لوح · 8 بطارية هيثيوم (128 كيلو)", items: com(S50, 2, "ac_06", 150, 10, { dc: [["DCBOX_1500_10", 1]], hv: 8, ctrl: 1, ebc: 1, bdc: 1 }) },
-  { type: "com", group: g50, title: "2× 50 كيلو · 180 لوح · 12 بطارية هيثيوم (192 كيلو)", items: com(S50, 2, "ac_06", 180, 12, { dc: [["DCBOX_1500_6", 2]], hv: 12, ctrl: 1, ebc: 1, bdc: 1 }) },
-  { type: "com", group: g50, title: "2× 50 كيلو · 180 لوح · كبينة بايلونتك 313 كيلو", items: com(S50, 2, "ac_06", 180, 12, { dc: [["DCBOX_1500_6", 2]], other: [["CAB_PYLON_313", 1]] }) },
-  { type: "com", group: g50, title: "2× 50 كيلو · 180 لوح · 13 بطارية بايلونتك M5", items: com(S50, 2, "ac_06", 180, 12, { dc: [["DCBOX_1500_6", 2]], other: [["BAT_PYLON_M5_15_68K", 13], ["KIT_M5", 1], ["RACK_M5_16", 1], ["CTRL_M5", 1]] }) },
-  { type: "com", group: g125, title: "125 كيلو · 221 لوح · 12 بطارية هيثيوم (192 كيلو)", items: com(S125, 1, "ac_15", 221, 13, { dc: [["DCBOX_1500_8", 2]], hv: 12, ctrl: 1, ebc: 1, bdc: 1 }) },
-  { type: "com", group: g125, title: "2× 125 كيلو · 442 لوح · 24 بطارية هيثيوم (384 كيلو)", items: com(S125, 2, "ac_15", 442, 26, { dc: [["DCBOX_1500_10", 2], ["DCBOX_1500_8", 1]], hv: 24, ctrl: 2, ebc: 2, bdc: 2 }) },
-  { type: "com", group: g125, title: "2× 125 كيلو · 646 لوح · 36 بطارية هيثيوم (576 كيلو)", items: com(S125, 2, "ac_15", 646, 38, { dc: [["DCBOX_1500_10", 4]], hv: 36, ctrl: 3, ebc: 3, bdc: 3 }) },
+  ...BIG_ROWS.map(([kw, n, , pv, dc, hv]): Preset => {
+    const [inv, str, ac0] = BIG_INV[kw]!, c = Math.ceil(hv / 12);
+    return { type: "com", group: bigGroup(kw, n), title: `${n > 1 ? n + "× " : ""}${kw} كيلو · ${pv} لوح · ${hv} بطارية هيثيوم (${hv * 16} كيلو)`,
+      items: com(inv, n, `ac_${String(ac0 + n - 1).padStart(2, "0")}`, pv, Math.ceil(pv / str), { dc: [["DCBOX_1500_10", Math.ceil(dc / 10)]], hv, ctrl: c, ebc: hv > 4 ? c : 0, bdc: c }) };
+  }),
+  { type: "com", group: bigGroup(50, 2), title: "2× 50 كيلو · 180 لوح · كبينة بايلونتك 313 كيلو", items: com(S50, 2, "ac_06", 180, 12, { dc: [["DCBOX_1500_6", 2]], other: [["CAB_PYLON_313", 1]] }) },
+  { type: "com", group: bigGroup(50, 2), title: "2× 50 كيلو · 180 لوح · 13 بطارية بايلونتك M5", items: com(S50, 2, "ac_06", 180, 12, { dc: [["DCBOX_1500_6", 2]], other: [["BAT_PYLON_M5_15_68K", 13], ["KIT_M5", 1], ["RACK_M5_16", 1], ["CTRL_M5", 1]] }) },
 ];
 PRESETS.push(...COMMERCIAL);
 // Bot formulas (State Machine), fed with daily kWh directly (no ÷30):
-// production = panels × panel W × 5.5 / 1000.
-export const dailyProduction = (p: Preset) => p.panels ? p.panels * (p.pw ?? 720) * 5.5 / 1000 :
-  p.items.reduce((s, [k, q]) => s + (k === "PV_SUNTECH_595" ? q * 595 : k === "PV_SUNTECH_720" ? q * 720 : 0), 0) * 5.5 / 1000;
+// production = panels × panel W × 5 / 1000.
+// Ranges mode: an edited commercial range (F.comRanges, same key as the bot's ACTES_COM_RANGES) replaces it.
+export const panelsOf = (p: Preset) => p.panels ?? Number((p.title.match(/(\d+) لوح/) ?? [])[1] ?? 0);
+// Original items of a ready-made system as [catalog key, qty]; bot lines are linked to catalog keys.
+export const defaultPresetItems = (p: Preset): [string, number][] =>
+  p.lines ? p.lines.map((l) => [catalogKeyFor(l) ?? l.key, l.qty] as [string, number]) : p.items;
+export const comKeyOf = (p: Preset) => comKey(Number((p.group.match(/(\d+(?:\.\d+)?) كيلو/) ?? [])[1] ?? 0), /3 فاز|منظومات تجارية/.test(p.group), panelsOf(p));
+export const dailyProduction = (p: Preset) => {
+  if (p.type === "com" && F.mode === "ranges") { const r = F.comRanges[comKeyOf(p)]; if (r && r > 0) return r; }
+  return p.panels ? p.panels * (p.pw ?? 720) * F.sun / 1000 :
+    p.items.reduce((s, [k, q]) => s + (k === "PV_SUNTECH_595" ? q * 595 : k === "PV_SUNTECH_720" ? q * 720 : 0), 0) * F.sun / 1000;
+};
 // ===== Exact copy of the WhatsApp bot selection rules (State Machine) =====
 // Residential: bot RES_TABLE "range" values (Excel), in the same order as the residential presets.
 // Preset #6 (6.2 kW, 4 panels) is bot r6 AND r7 (identical systems), so it carries both ranges.
-const RES_RANGES: number[][] = [[1.2], [2.5], [2.5], [4], [4], [5, 7.5], [13], [21], [31.7], [35.6], [55.4], [63.4], [71.3], [83.2], [106.9]];
+
 const RES_LIST = PRESETS.filter((p) => p.type !== "com");
 export const RES_MAX_DAILY = 106.9;
+const resMax = () => Math.max(...F.resRanges.flat());
 export const DEFAULT_KWH_PRICE = 290;
 const E = 0.0001;
 // resNearest: closest range; 8/12 kW never below the need; equal distances are all returned (bot tie buttons).
@@ -115,7 +142,7 @@ export const resOptions = (need: number): Preset[] => {
   let best: number | null = null;
   let out: Preset[] = [];
   RES_LIST.forEach((p, i) => {
-    for (const range of RES_RANGES[i] ?? []) {
+    for (const range of F.resRanges[i] ?? []) {
       if (/^إنفرتر (8|12) /.test(p.group) && range < need - E) continue;
       const d = Math.abs(range - need);
       if (best === null || d < best - E) { best = d; out = [p]; }
@@ -148,18 +175,18 @@ export const comOptions = (need: number): Preset[] => {
   }
   return out;
 };
-// Bot entry paths. Residential bill → need = bill ÷ price ÷ 30; above the largest home range → commercial.
+// Bot entry paths. Residential bill → need = bill ÷ price ÷ 26; above the largest home range → commercial.
 export const optionsForResBill = (bill: number, price = DEFAULT_KWH_PRICE): Preset[] => {
-  const need = bill / price / 30;
-  return need > RES_MAX_DAILY + E ? comOptions(need) : resOptions(need);
+  const need = bill / price / F.days;
+  return need > resMax() + E ? comOptions(need) : resOptions(need);
 };
 export type ComMethod = "bill" | "kwh" | "diesel";
-// Commercial (com_1 bill / com_2 kWh per month / com_3 diesel litres ÷ 0.27) → kWh/month ÷ 30.
+// Commercial (com_1 bill / com_2 kWh per month / com_3 diesel litres ÷ 0.27) → kWh/month ÷ 26.
 export const optionsForCom = (m: ComMethod, v: number, price = DEFAULT_KWH_PRICE): Preset[] => {
   const kwh = m === "bill" ? v / price : m === "kwh" ? v : v / 0.27;
-  const need = kwh / 30;
+  const need = kwh / F.days;
   // Live bot: a commercial need that fits the home range is treated exactly as residential.
-  return need <= RES_MAX_DAILY + E ? resOptions(need) : comOptions(need);
+  return need <= resMax() + E ? resOptions(need) : comOptions(need);
 };
 
 // Three choices (app + bot): one size smaller / the right system / one size larger.
@@ -183,28 +210,50 @@ void SIZE_ORDER;
 // day 70% → next with less battery; 50/50 → unchanged. Then less/more are rebuilt around the new pick.
 export type DayNight = 30 | 50 | 70;
 export const batteryOf = (p: Preset) => Number((p.title.match(/\((\d+(?:\.\d+)?) كيلو\)/) ?? p.title.match(/(?:بطارية|بايلونتك) ([\d.]+)/) ?? [])[1] ?? 0);
-export const shiftDayNight = (rec: Preset, night: DayNight): Preset => {
+// Usable share of battery capacity used to check if it covers the night consumption.
+export const BATTERY_USABLE = 0.85; // default; live value is F.dod
+// need = daily kWh. Night 70%: keep the system if its battery covers need×70%, else the next system with
+// more battery that covers it (largest if none). Day 70%: smaller battery only if it still covers need×30%.
+export const shiftDayNight = (rec: Preset, night: DayNight, need?: number): Preset => {
   if (night === 50) return rec;
   const fam = PRESETS.filter((p) => p.group === rec.group && (p.type ?? "res") === (rec.type ?? "res"));
   const more = night === 70, b = batteryOf(rec);
+  let cands: Preset[];
   if (rec.type !== "com") {
-    const i = fam.indexOf(rec), dir = more ? 1 : -1;
-    for (let j = i + dir; j >= 0 && j < fam.length; j += dir) if (fam[j]!.title !== rec.title) return fam[j]!;
-    return rec;
+    const i = fam.indexOf(rec);
+    cands = (more ? fam.slice(i + 1) : fam.slice(0, i).reverse()).filter((p) => p.title !== rec.title);
+  } else {
+    const d = dailyProduction(rec);
+    cands = [...fam].sort((x, y) => dailyProduction(x) - dailyProduction(y)).filter((p) => dailyProduction(p) >= d - E && (more ? batteryOf(p) > b : batteryOf(p) < b));
   }
-  const d = dailyProduction(rec);
-  return [...fam].sort((x, y) => dailyProduction(x) - dailyProduction(y)).find((p) => dailyProduction(p) >= d - E && (more ? batteryOf(p) > b : batteryOf(p) < b)) ?? rec;
+  if (need == null || !(need > 0)) return cands[0] ?? rec;
+  const nightNeed = need * F.night[night] / 100;
+  const covers = (p: Preset) => batteryOf(p) * F.dod >= nightNeed - F.batTol - E;
+  if (more) {
+    if (covers(rec)) return rec;
+    const up = [...cands].sort((x, y) => batteryOf(x) - batteryOf(y));
+    return up.find(covers) ?? up[up.length - 1] ?? rec;
+  }
+  const down = cands.filter(covers).sort((x, y) => batteryOf(x) - batteryOf(y));
+  return down[0] ?? rec;
 };
-export const tiersDayNight = (t: Tiers | null, night: DayNight): Tiers | null => {
+export const tiersDayNight = (t: Tiers | null, night: DayNight, need?: number): Tiers | null => {
   if (!t || night === 50) return t;
-  const r = shiftDayNight(t.rec, night);
+  const r = shiftDayNight(t.rec, night, need);
   return r === t.rec ? t : tiersFrom([r]);
 };
+// Daily kWh need from the entered amount (same conversions as the bot).
+export const dailyNeed = (path: "res" | "com", m: ComMethod, v: number, price = DEFAULT_KWH_PRICE) =>
+  (path === "res" || m === "bill" ? v / price : m === "kwh" ? v : v / 0.27) / F.days;
 export const tieredOptions = (path: "res" | "com", m: ComMethod, v: number, price = DEFAULT_KWH_PRICE) =>
   tiersFrom(path === "res" ? optionsForResBill(v, price) : optionsForCom(m, v, price));
 // Bot-style inverter choice for business systems: sizes that cover the need, then single/three phase.
 export const isThreePhase = (p: Preset) => /3 فاز/.test(p.group);
 export type InvChoice = { kw: number; single?: Preset; three?: Preset };
+// Item keys of a ready-made system (used only as the accessory template for equation sizing).
+export const templateOf = (p: Preset): [string, number][] => (p.lines ? p.lines.map((l) => [catalogKeyFor(l) ?? l.key, l.qty] as [string, number]) : p.items);
+// 8–125 kW systems are sized fully by the equations (see sizing.ts); smaller home systems stay ready-made.
+export const eqEligible = (p: Preset) => templateOf(p).some(([k]) => /^INV_DEYE_|_HV$/.test(k));
 export const inverterChoices = (opts: Preset[]): InvChoice[] => {
   if (!opts.length || !opts.every((p) => p.type === "com")) return [];
   const m = new Map<number, InvChoice>();
@@ -378,9 +427,17 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
   const [dn, setDn] = useState<DayNight>(50);
   const [invs, setInvs] = useState<InvChoice[] | null>(null);
   const [invKw, setInvKw] = useState<InvChoice | null>(null);
+  const [eq, setEq] = useState<{ need: number; three: boolean; template: [string, number][]; type: "res" | "com" } | null>(null);
+  const [loadKw, setLoadKw] = useState("");
+  const [hvBase, setHvBase] = useState<Line[] | null>(null); // HV system before the storage choice
+  const [storage, setStorage] = useState<StorageChoice>("h112s");
+  const [nightNeed, setNightNeed] = useState<number | null>(null); // customer night kWh — cabinets/Pylontech compare to this
   const getKwh = useServerFn(getKwhPrice);
   const saveKwh = useServerFn(setKwhPrice);
   const { data: kwhData, refetch: refetchKwh } = useQuery(offlineQuery({ queryKey: ["kwh_price"], queryFn: () => getKwh({ data: { pw } }) }));
+  const getF = useServerFn(getFormulas);
+  const { data: fData } = useQuery(offlineQuery({ queryKey: ["formulas"], queryFn: () => getF({ data: { pw } }) }));
+  if (fData?.formulas) applyFormulas(fData.formulas);
   const kwhPrice = kwhData?.kwh_price ?? DEFAULT_KWH_PRICE;
   const [kwhEdit, setKwhEdit] = useState<string | null>(null);
   const saveKwhPrice = async () => {
@@ -542,8 +599,17 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
     } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
   };
   // Only the recommended system → load it straight away (no independence step).
-  const showTiers = (t0: Tiers | null) => { const t = tiersDayNight(t0, dn); if (t && !t.low && !t.high) { setTiers(null); loadPreset(t.rec); } else setTiers(t); };
-  function loadPreset(p: Preset) {
+  const showTiers = (t0: Tiers | null) => { const nd = Number(daily) > 0 ? dailyNeed(path ?? "res", comM ?? "bill", Number(daily), kwhPrice) : undefined; setNightNeed(nd ? (nd * F.night[dn]) / 100 : null); const t = tiersDayNight(t0, dn, nd); setTiers(null); if (t) loadPreset(t.rec); };
+  const pickInv = (p: InvPick) => {
+    if (!eq) return;
+    const sys = buildSystem(eq.template, items as EqItem[], eq.need, F.night[dn], p);
+    setNightNeed((eq.need * F.night[dn]) / 100);
+    setEq(null);
+    loadPreset({ type: eq.type, group: `${p.kw} كيلو`, title: `${p.units > 1 ? `${p.units}× ` : ""}${p.kw} كيلو`, items: sys });
+  };
+  function loadPreset(p0: Preset) {
+    const ed = F.mode === "ranges" ? F.presetItems[p0.title] : undefined; // edits apply only when ranges is the active (✓) system
+    const p: Preset = ed ? (({ lines: _l, ...r }) => ({ ...r, items: ed }))(p0) : p0;
     // Like the bot: every linked line takes name, specs, unit and price live from the catalog.
     const out: Line[] = p.lines ? p.lines.map((l) => {
       const k = catalogKeyFor(l), r = k ? items.find((x) => x.key === k) : null;
@@ -554,12 +620,24 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
       if (r) out.push({ key: r.key, name: r.name, unit: r.unit, price: Number(r.price ?? 0), qty, specs: specsOf(r) });
     }
     if (!out.length) return setMsg("أصناف هذه المنظومة غير متوفرة في قائمة الأصناف");
-    const t = p.type ?? "res", full = withAuto(out, t, new Set());
+    const t = p.type ?? "res", full = withAuto(applyEquations(out, items as EqItem[], catalogKeyFor), t, new Set());
     setQuoteType(t); setDismissed(new Set());
+    setHvBase(hvCapacity(full, items as EqItem[]) > 0 ? full : null); setStorage("h112s");
     setLines(Object.fromEntries(full.map((l) => [l.key, l])));
     setShowHist(false);
     void generate(full);
   }
+  const pickStorage = (c: StorageChoice) => {
+    if (!hvBase) return;
+    const next = applyStorage(hvBase, c, items as EqItem[], F, nightNeed ?? undefined);
+    setStorage(c); setLines(Object.fromEntries(next.map((l) => [l.key, l]))); void generate(next);
+  };
+  const lvBat = lvChoices(Object.values(lines), items);
+  const pickLvBat = (o: LvBatOpt) => {
+    const r = lvCatalogItem(o, items); if (!r) return;
+    const next = Object.values(lines).map((l) => lvBatOf(l.key, l.name) ? { ...l, key: r.key, name: r.name, unit: r.unit ?? l.unit, price: Number(r.price ?? 0), specs: specsOf(r) } : l);
+    setLines(Object.fromEntries(next.map((l) => [l.key, l]))); void generate(next);
+  };
   const loadQuote = (qt: (typeof quotes)[number]) => {
     // Saved quotes keep their items as they were: auto lines become ordinary lines.
     const its = ((qt.items as unknown as Line[]) ?? []).map((l) => ({ ...l, auto: false }));
@@ -570,22 +648,22 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
   };
 
   return (
-    <div className="grid gap-3 p-3 lg:h-full lg:grid-cols-[minmax(0,1fr)_360px] lg:overflow-hidden">
-      <section className="flex min-h-0 flex-col gap-3">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-3 p-3 lg:h-full lg:grid-cols-[minmax(0,1fr)_360px] lg:overflow-hidden">
+      <section className="flex min-h-0 min-w-0 flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="flex items-center gap-2 text-lg font-bold"><FilePlus2 className="h-5 w-5 text-primary" />إنشاء عرض سعر</h2>
           <div className="mr-auto flex flex-wrap items-center gap-1">
             {(["res", "com"] as const).map((k) => (
-              <button key={k} type="button" onClick={() => { setPath(path === k ? null : k); setComM(null); setTiers(null); setInvs(null); setInvKw(null); setDaily(""); }} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${path === k ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{k === "res" ? "سكني" : "تجاري"}</button>
+              <button key={k} type="button" onClick={() => { setPath(path === k ? null : k); if (k === "res" && dn === 30) setDn(50); setComM(null); setTiers(null); setInvs(null); setInvKw(null); setEq(null); setDaily(""); }} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${path === k ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{k === "res" ? "سكني" : "تجاري"}</button>
             ))}
             {path === "com" && (["bill", "kwh", "diesel"] as const).map((m) => (
               <button key={m} type="button" onClick={() => { setComM(m); setDaily(""); }} className={`rounded-lg border px-2 py-1.5 text-xs font-semibold ${comM === m ? "border-primary bg-primary/10 text-primary" : "bg-card"}`}>{m === "bill" ? "فاتورة" : m === "kwh" ? "استهلاك شهري" : "الديزل"}</button>
             ))}
-            {(path === "res" || (path === "com" && comM)) && ([[30, "نهار 70 / ليل 30"], [50, "50 / 50"], [70, "ليل 70 / نهار 30"]] as const).map(([v, label]) => (
+            {(path === "res" || (path === "com" && comM)) && ([[30, "نهار 70 / ليل 30"], [50, "50 / 50"], [70, "ليل 70 / نهار 30"]] as const).filter(([v]) => !(path === "res" && v === 30)).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setDn(v)} className={`rounded-lg border px-2 py-1.5 text-xs font-semibold ${dn === v ? "border-primary bg-primary/10 text-primary" : "bg-card"}`}>{label}</button>
             ))}
             {(path === "res" || (path === "com" && comM)) && (
-              <form onSubmit={(e) => { e.preventDefault(); const n = Number(daily); if (!(n > 0)) return; setInvKw(null); const opts = path === "res" ? optionsForResBill(n, kwhPrice) : optionsForCom(comM ?? "bill", n, kwhPrice); const ic = inverterChoices(opts); if (ic.length) { setTiers(null); setInvs(ic); return; } setInvs(null); const t = tiersFrom(opts); if (!t) { setTiers(null); return setMsg("لا توجد منظومة مناسبة — يُحوّل للموظف المختص"); } showTiers(t); }} className="flex items-center gap-1">
+              <form onSubmit={(e) => { e.preventDefault(); const n = Number(daily); if (!(n > 0)) return; setInvKw(null); const opts = path === "res" ? optionsForResBill(n, kwhPrice) : optionsForCom(comM ?? "bill", n, kwhPrice); setEq(null); const rec0 = opts[0]; if (rec0 && F.mode === "eq" && eqEligible(rec0)) { setTiers(null); setInvs(null); setLoadKw(""); return setEq({ need: dailyNeed(path ?? "res", comM ?? "bill", n, kwhPrice), three: path === "com" || templateOf(rec0).some(([k]) => /_3P/.test(k)), template: templateOf(rec0), type: rec0.type ?? "res" }); } const ic = F.mode === "eq" ? inverterChoices(opts) : []; if (ic.length) { setTiers(null); setInvs(ic); return; } setInvs(null); const t = tiersFrom(opts); if (!t) { setTiers(null); return setMsg("لا توجد منظومة مناسبة — يُحوّل للموظف المختص"); } showTiers(t); }} className="flex items-center gap-1">
                 <input autoFocus value={daily} onChange={(e) => setDaily(e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder={path === "res" || comM === "bill" ? "الفاتورة الشهرية (ريال)" : comM === "kwh" ? "الاستهلاك الشهري (كيلووات)" : "الديزل الشهري (لتر)"} className="w-40 rounded-lg border bg-card px-2 py-1.5 text-xs" />
                 <button type="submit" className="rounded-lg bg-primary px-2 py-1.5 text-xs font-bold text-primary-foreground">عرض</button>
               </form>
@@ -599,8 +677,26 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
                 <button type="button" onClick={saveKwhPrice} className="rounded-lg bg-primary px-2 py-1 font-bold text-primary-foreground">حفظ</button>
                 <button type="button" onClick={() => setKwhEdit(null)} className="rounded-lg bg-muted px-2 py-1">إلغاء</button></>}
           </div>
-          <button onClick={() => setShowHist((v) => !v)} className="flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold hover:bg-muted/70"><History className="h-4 w-4" />العروض الجاهزة ({PRESETS.length})</button>
         </div>
+        {eq && (
+          <div className="space-y-2 rounded-xl border bg-muted/30 p-2">
+            <div className="text-xs text-muted-foreground">الاحتياج اليومي: {eq.need.toFixed(1)} كيلووات ساعة</div>
+            <form onSubmit={(e) => { e.preventDefault(); const kw = Number(loadKw); if (!(kw > 0)) return; const p = inverterForLoad(items as EqItem[], eq.need, kw, eq.three); if (!p) return setMsg("الحمل أكبر من 5 إنفرترات — يُحوّل للموظف المختص"); pickInv(p); }} className="flex flex-wrap items-center gap-1">
+              <span className="text-xs font-bold">1) الحمل في الساعة:</span>
+              <input value={loadKw} onChange={(e) => setLoadKw(e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="كيلووات (مثال 10)" className="w-32 rounded-lg border bg-card px-2 py-1.5 text-xs" />
+              <button type="submit" className="rounded-lg bg-primary px-2 py-1.5 text-xs font-bold text-primary-foreground">اختر الأنسب</button>
+            </form>
+            <div className="text-xs font-bold">2) أو اختر الإنفرتر:</div>
+            <div className="flex flex-wrap gap-1">
+              {inverterOptions(items as EqItem[], eq.need, eq.three).map((p) => (
+                <button key={p.key} type="button" onClick={() => pickInv(p)} className="rounded-lg border bg-card px-3 py-1.5 text-right text-xs hover:bg-muted">
+                  <div className="font-bold">{p.units > 1 ? `${p.units}× ` : ""}{p.kw} كيلو {p.hv ? "هاي فولتج" : p.three ? "ثري فاز" : "سنجل فاز"}</div>
+                  <div className="text-muted-foreground">{usd(p.cost)}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {invs && !tiers && (
           <div className="rounded-xl border bg-muted/30 p-2">
             {!invKw ? (<>
@@ -627,20 +723,24 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
             </div>
           </div>
         )}
-        {showHist && (
-          <div className="max-h-96 overflow-y-auto rounded-xl border bg-muted/30 p-2 animate-in fade-in slide-in-from-top-2">
-            <div className="mb-2 grid grid-cols-2 gap-1">
-              {(["res", "com"] as const).map((k) => (
-                <button key={k} onClick={() => setPresetTab(k)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${presetTab === k ? "bg-primary text-primary-foreground" : "bg-card border"}`}>{k === "res" ? "منظومات سكنية" : "منظومات تجارية"}</button>))}
+        {lvBat && (
+          <div className="rounded-xl border border-primary/30 bg-card p-2">
+            <div className="mb-1 text-xs font-bold">اختر نوع البطارية:</div>
+            <div className="flex flex-wrap gap-1">
+              {lvBat.opts.map((o) => (
+                <button key={o} type="button" onClick={() => pickLvBat(o)} aria-pressed={lvBat.current === o} className={`rounded-lg border px-2 py-1 text-xs font-semibold ${lvBat.current === o ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>{lvBat.current === o ? "✓ " : ""}{LV_BAT_LABELS[o]}</button>
+              ))}
             </div>
-            {[...new Set(PRESETS.filter((p) => (p.type ?? "res") === presetTab).map((p) => p.group))].map((g) => (
-              <div key={g} className="mb-2">
-                <div className="px-2 py-1 text-xs font-bold text-primary">{g}</div>
-                <div className="grid gap-1 sm:grid-cols-2">
-                  {PRESETS.filter((p) => p.group === g).map((p) => (
-                    <button key={p.title} onClick={() => loadPreset(p)} disabled={busy} className="rounded-lg border bg-card px-3 py-2 text-right text-sm font-semibold hover:border-primary hover:shadow disabled:opacity-50">{p.title}</button>))}
-                </div>
-              </div>))}
+          </div>
+        )}
+        {hvBase && (
+          <div className="rounded-xl border border-primary/30 bg-card p-2">
+            <div className="mb-1 text-xs font-bold">اختر نظام تخزين الطاقة:</div>
+            <div className="flex flex-wrap gap-1">
+              {(Object.keys(STORAGE_LABELS) as StorageChoice[]).filter((c) => storageAvailable(c, nightNeed ?? hvCapacity(hvBase, items as EqItem[]))).map((c) => (
+                <button key={c} type="button" onClick={() => pickStorage(c)} aria-pressed={storage === c} className={`rounded-lg border px-2 py-1 text-xs font-semibold ${storage === c ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>{storage === c ? "✓ " : ""}{STORAGE_LABELS[c]}</button>
+              ))}
+            </div>
           </div>
         )}
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
@@ -693,7 +793,7 @@ export function QuoteBuilder({ pw, initialCustomerId }: { pw: string; initialCus
         </div>
       </section>
 
-      <aside className="flex min-h-0 flex-col gap-1.5 rounded-xl border bg-card p-2 shadow-sm">
+      <aside className="flex min-h-0 min-w-0 flex-col gap-1.5 rounded-xl border bg-card p-2 shadow-sm">
         <select value={custId ?? ""} onChange={(e) => pickCustomer(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
           <option value="">— العميل: جديد / بدون —</option>
           {customers.map((c) => <option key={c.id} value={c.id}>{c.name || c.phone} {c.name ? `(${c.phone})` : ""}</option>)}
