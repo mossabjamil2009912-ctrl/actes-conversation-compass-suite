@@ -570,9 +570,12 @@ export type Database = {
       }
       customers: {
         Row: {
+          blocked: boolean
           bot_paused: boolean
           city: string | null
           created_at: string
+          deleted_at: string | null
+          hidden_before: string | null
           id: string
           last_at: string
           last_message: string | null
@@ -584,9 +587,12 @@ export type Database = {
           unread: number
         }
         Insert: {
+          blocked?: boolean
           bot_paused?: boolean
           city?: string | null
           created_at?: string
+          deleted_at?: string | null
+          hidden_before?: string | null
           id?: string
           last_at?: string
           last_message?: string | null
@@ -598,9 +604,12 @@ export type Database = {
           unread?: number
         }
         Update: {
+          blocked?: boolean
           bot_paused?: boolean
           city?: string | null
           created_at?: string
+          deleted_at?: string | null
+          hidden_before?: string | null
           id?: string
           last_at?: string
           last_message?: string | null

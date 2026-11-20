@@ -13,7 +13,7 @@ export const listCustomers = createServerFn({ method: "POST" })
     check(data.pw);
     const { supabaseAdmin } = await import("@/lib/db.server");
     const { data: rows, error } = await supabaseAdmin
-      .from("customers").select("*").order("last_at", { ascending: false }).limit(500);
+      .from("customers").select("*").is("deleted_at", null).eq("blocked", false).order("last_at", { ascending: false }).limit(500);
     if (error) throw new Error(error.message);
     const since = new Date(Date.now() - 2 * 864e5).toISOString();
     const { data: cm } = await supabaseAdmin.from("messages").select("customer_id, created_at")
@@ -22,6 +22,50 @@ export const listCustomers = createServerFn({ method: "POST" })
     for (const m of cm ?? []) if (!lastIn[m.customer_id]) lastIn[m.customer_id] = m.created_at;
     return rows.map((r) => ({ ...r, notes: ((r as Record<string, unknown>)["notes"] as string | null) ?? null, last_customer_at: lastIn[r.id] ?? null }));
   });
+
+// Chat deletion: "delete" hides the chat on every device (it comes back, fresh, when the customer writes again);
+// "block" also keeps every future message hidden. Both stay restorable from the hidden archive.
+export const deleteChat = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ pw: z.string(), id: z.string().uuid(), block: z.boolean() }).parse(d))
+  .handler(async ({ data }) => {
+    check(data.pw);
+    const { supabaseAdmin } = await import("@/lib/db.server");
+    const { error } = await supabaseAdmin.from("customers")
+      .update({ deleted_at: new Date().toISOString(), blocked: data.block, unread: 0 }).eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const listDeletedChats = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ pw: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    check(data.pw);
+    const { supabaseAdmin } = await import("@/lib/db.server");
+    const { data: rows, error } = await supabaseAdmin.from("customers")
+      .select("id, phone, name, city, system, last_message, last_at, deleted_at, blocked")
+      .or("deleted_at.not.is.null,blocked.eq.true").order("deleted_at", { ascending: false, nullsFirst: false }).limit(500);
+    if (error) throw new Error(error.message);
+    return rows ?? [];
+  });
+
+export const restoreChat = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ pw: z.string(), id: z.string().uuid() }).parse(d))
+  .handler(async ({ data }) => {
+    check(data.pw);
+    const { supabaseAdmin } = await import("@/lib/db.server");
+    const { error } = await supabaseAdmin.from("customers")
+      .update({ deleted_at: null, blocked: false, hidden_before: null }).eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Staff opening/creating a chat for a deleted number brings it back as a fresh chat.
+async function reviveChat(id: string) {
+  const { supabaseAdmin } = await import("@/lib/db.server");
+  const { data: c } = await supabaseAdmin.from("customers").select("deleted_at, blocked").eq("id", id).maybeSingle();
+  if (!c || (!c.deleted_at && !c.blocked)) return;
+  await supabaseAdmin.from("customers").update({ deleted_at: null, blocked: false, hidden_before: c.deleted_at ?? new Date().toISOString() }).eq("id", id);
+}
 
 export const setBotPaused = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ pw: z.string(), id: z.string().uuid(), paused: z.boolean() }).parse(d))
@@ -44,18 +88,21 @@ export const saveNote = createServerFn({ method: "POST" })
   });
 
 export const getMessages = createServerFn({ method: "POST" })
-  .inputValidator((d) => z.object({ pw: z.string(), id: z.string().uuid() }).parse(d))
+  .inputValidator((d) => z.object({ pw: z.string(), id: z.string().uuid(), all: z.boolean().optional() }).parse(d))
   .handler(async ({ data }) => {
     check(data.pw);
     const { supabaseAdmin } = await import("@/lib/db.server");
-    const [, { data: desc, error }] = await Promise.all([
+    const [, { data: desc, error }, { data: cust }] = await Promise.all([
       supabaseAdmin.from("customers").update({ unread: 0 }).eq("id", data.id).gt("unread", 0),
       supabaseAdmin.from("messages").select("*").eq("customer_id", data.id)
         .order("created_at", { ascending: false }).limit(1000),
+      supabaseAdmin.from("customers").select("hidden_before").eq("id", data.id).maybeSingle(),
     ]);
     if (error) throw new Error(error.message);
     // أحدث 1000 رسالة (كانت تُجلب الأقدم فتختفي الرسائل الجديدة في المحادثات الطويلة)
-    const all = (desc ?? []).reverse();
+    // محادثة حُذفت ثم عاد العميل: تظهر الرسائل الجديدة فقط (الأرشيف يعرض الكل)
+    const cut = !data.all && cust?.hidden_before ? new Date(cust.hidden_before).getTime() : 0;
+    const all = (desc ?? []).reverse().filter((r) => !cut || new Date(r.created_at).getTime() > cut);
     // فقاعة الملف قد تُسجَّل قبل رسالة العميل (سباق توقيت): نحتفظ بالفقاعة التي في مكانها الصحيح ونعطيها الملف
     const isPdf = (r: (typeof all)[number]) => r.direction === "bot" && r.kind === "pdf";
     const near = (a: (typeof all)[number], b: (typeof all)[number]) => Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) < 120000;
@@ -120,7 +167,7 @@ export const ensureCustomerByPhone = createServerFn({ method: "POST" })
     check(data.pw);
     const { supabaseAdmin } = await import("@/lib/db.server");
     const { data: ex } = await supabaseAdmin.from("customers").select("id").eq("phone", data.phone).maybeSingle();
-    if (ex) return { id: ex.id as string };
+    if (ex) { await reviveChat(ex.id as string); return { id: ex.id as string }; }
     const { data: c, error } = await supabaseAdmin.from("customers").insert({ phone: data.phone, name: data.name || null }).select("id").single();
     if (error || !c) throw new Error("تعذّر إضافة الرقم");
     return { id: c.id as string };
@@ -770,7 +817,7 @@ export const openCustomerChat = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/lib/db.server");
     const tail = phone.slice(-9);
     const { data: found } = await supabaseAdmin.from("customers").select("id").like("phone", `%${tail}`).limit(1);
-    if (found?.[0]) return { id: found[0].id as string };
+    if (found?.[0]) { await reviveChat(found[0].id as string); return { id: found[0].id as string }; }
     const { data: row, error } = await supabaseAdmin.from("customers").insert({ phone, name: data.name } as never).select("id").single();
     if (error) throw new Error(error.message);
     return { id: (row as { id: string }).id };

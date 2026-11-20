@@ -40,7 +40,7 @@ export const Route = createFileRoute("/api/public/bot-message")({
           if (!d.text.trim() && !d.stage && !d.system) continue;
 
           const { data: existing } = await supabaseAdmin
-            .from("customers").select("id, unread, stage").eq("phone", phone).maybeSingle();
+            .from("customers").select("id, unread, stage, deleted_at, blocked").eq("phone", phone).maybeSingle();
 
           // «عرض سعر» فقط عند طلب عرض السعر الرسمي (إرسال PDF العرض/الكتالوجات)، لا عند «المنظومة المناسبة»
           let stage = d.stage ?? null;
@@ -52,6 +52,7 @@ export const Route = createFileRoute("/api/public/bot-message")({
           const patch: {
             last_at: string; last_message?: string; name?: string; city?: string;
             stage?: string; system?: string; unread?: number;
+            deleted_at?: string | null; hidden_before?: string | null;
           } = { last_at: new Date().toISOString() };
           if (d.text.trim()) patch.last_message = d.kind === "pdf" ? `📄 ${d.text}` : d.text;
           if (d.name) patch.name = d.name;
@@ -62,7 +63,14 @@ export const Route = createFileRoute("/api/public/bot-message")({
 
           let id = existing?.id;
           if (id) {
-            if (d.direction === "customer" || movedStage) patch.unread = (existing?.unread ?? 0) + 1;
+            // محظور: تُحفظ الرسائل مخفية فقط. محذوف: يعود كمحادثة جديدة عند رسالة العميل
+            if (existing?.blocked) { /* stays hidden */ }
+            else if (d.direction === "customer" || movedStage) patch.unread = (existing?.unread ?? 0) + 1;
+            if (!existing?.blocked && existing?.deleted_at && d.direction === "customer") {
+              patch.deleted_at = null;
+              patch.hidden_before = existing.deleted_at;
+              patch.unread = 1;
+            }
             await supabaseAdmin.from("customers").update(patch).eq("id", id);
           } else {
             const { data: ins, error } = await supabaseAdmin
