@@ -385,6 +385,59 @@ export type Database = {
         }
         Relationships: []
       }
+      catalog_categories: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      catalog_chunks: {
+        Row: {
+          catalog_id: string
+          content: string
+          created_at: string
+          fts: unknown
+          id: string
+          page: number
+        }
+        Insert: {
+          catalog_id: string
+          content: string
+          created_at?: string
+          fts?: unknown
+          id?: string
+          page?: number
+        }
+        Update: {
+          catalog_id?: string
+          content?: string
+          created_at?: string
+          fts?: unknown
+          id?: string
+          page?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_chunks_catalog_id_fkey"
+            columns: ["catalog_id"]
+            isOneToOne: false
+            referencedRelation: "catalogs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       catalog_items: {
         Row: {
           active: boolean
@@ -435,6 +488,85 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      catalog_profiles: {
+        Row: {
+          catalog_id: string
+          specs: Json
+          summary_ar: string
+          summary_en: string
+          updated_at: string
+        }
+        Insert: {
+          catalog_id: string
+          specs?: Json
+          summary_ar?: string
+          summary_en?: string
+          updated_at?: string
+        }
+        Update: {
+          catalog_id?: string
+          specs?: Json
+          summary_ar?: string
+          summary_en?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_profiles_catalog_id_fkey"
+            columns: ["catalog_id"]
+            isOneToOne: true
+            referencedRelation: "catalogs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalogs: {
+        Row: {
+          category_id: string | null
+          cover_path: string | null
+          created_at: string
+          description: string
+          file_path: string
+          id: string
+          keywords: string
+          language: string
+          page_count: number
+          title: string
+        }
+        Insert: {
+          category_id?: string | null
+          cover_path?: string | null
+          created_at?: string
+          description?: string
+          file_path: string
+          id?: string
+          keywords?: string
+          language?: string
+          page_count?: number
+          title: string
+        }
+        Update: {
+          category_id?: string | null
+          cover_path?: string | null
+          created_at?: string
+          description?: string
+          file_path?: string
+          id?: string
+          keywords?: string
+          language?: string
+          page_count?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalogs_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_categories"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       customers: {
         Row: {
@@ -829,7 +961,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      search_catalog_chunks: {
+        Args: { lim?: number; q: string }
+        Returns: {
+          catalog_id: string
+          content: string
+          page: number
+          score: number
+          title: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
