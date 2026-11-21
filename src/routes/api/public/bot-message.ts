@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { incomingVisibility } from "@/lib/chat-visibility";
 import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 
@@ -64,13 +65,7 @@ export const Route = createFileRoute("/api/public/bot-message")({
           let id = existing?.id;
           if (id) {
             // محظور: تُحفظ الرسائل مخفية فقط. محذوف: يعود كمحادثة جديدة عند رسالة العميل
-            if (existing?.blocked) { /* stays hidden */ }
-            else if (d.direction === "customer" || movedStage) patch.unread = (existing?.unread ?? 0) + 1;
-            if (!existing?.blocked && existing?.deleted_at && d.direction === "customer") {
-              patch.deleted_at = null;
-              patch.hidden_before = existing.deleted_at;
-              patch.unread = 1;
-            }
+            Object.assign(patch, incomingVisibility(existing!, d.direction, d.direction === "customer" || movedStage));
             await supabaseAdmin.from("customers").update(patch).eq("id", id);
           } else {
             const { data: ins, error } = await supabaseAdmin

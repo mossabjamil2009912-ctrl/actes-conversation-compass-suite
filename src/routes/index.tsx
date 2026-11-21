@@ -43,6 +43,7 @@ import { FilePlus2, FileBarChart, Route as RouteIcon } from "lucide-react";
 import { BotFlow } from "@/components/BotFlow";
 import { Reports, useReports } from "@/components/Reports";
 import { ActsAdmin } from "@/components/ActsAdmin";
+import { ChatActions, DeletedChats, useLongPress } from "@/components/ChatDelete";
 import { Users as UsersIcon } from "lucide-react";
 import logo from "@/assets/actes-logo.png";
 import logoClean from "@/assets/actes-logo-clean.png";
@@ -303,10 +304,20 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
   ];
   const [showCatalogs, setShowCatalogs] = useState(false);
   const [showActs, setShowActs] = useState(false);
+  // ضغط مطوّل على محادثة: حذف / حذف نهائياً — وضغط 5 ثوانٍ على «المحادثات»: المحذوفات
+  const [actFor, setActFor] = useState<Cust | null>(null);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const chatsHold = useLongPress(5000, () => setShowDeleted(true));
+  const rowT = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rowFired = useRef(false);
+  const rowCancel = () => { if (rowT.current) clearTimeout(rowT.current); rowT.current = null; };
+  const rowLong = (c: Cust) => { rowCancel(); rowFired.current = true; setActFor(c); };
 
   return (
     <div dir="rtl" className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen lg:overflow-hidden">
       <FrontendRedirect />
+      {actFor && <ChatActions pw={pw} c={actFor} onClose={() => setActFor(null)} onDone={() => { if (openId === actFor.id) setOpenId(null); setActFor(null); }} />}
+      {showDeleted && <DeletedChats pw={pw} onClose={() => setShowDeleted(false)} />}
       {showCatalogs && <FloatingAppWindow title="منصة الكتالوجات" src="/catalogs" allow="clipboard-write" onClose={() => setShowCatalogs(false)} />}
       {showActs && <FloatingAppWindow title="منصة أكتس" src="https://sunwise-engineer-network.lovable.app" allow="geolocation; clipboard-write" onClose={() => setShowActs(false)} />}
       {!online && (
@@ -324,7 +335,8 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
           </h1>
           <nav className="order-last grid w-full grid-cols-5 items-center gap-0.5 md:order-none md:flex md:w-auto md:flex-1 md:justify-center">
             {tabs.map((t) => (
-              <button key={t.k} onClick={() => { if (t.k === "catalogs") { setShowCatalogs(true); return; } setView(t.k); if (t.k !== "chats") setOpenId(null); }}
+              <button key={t.k} {...(t.k === "chats" ? chatsHold.handlers : {})} style={t.k === "chats" ? { touchAction: "manipulation", WebkitTouchCallout: "none", userSelect: "none" } : undefined}
+                onClick={() => { if (t.k === "chats" && chatsHold.fired()) return; if (t.k === "catalogs") { setShowCatalogs(true); return; } setView(t.k); if (t.k !== "chats") setOpenId(null); }}
                 className={`relative flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-1 text-[10px] font-semibold leading-tight md:flex-row md:gap-1 md:px-2 md:text-xs ${view === t.k ? "bg-primary text-primary-foreground shadow" : "hover:bg-ink-foreground/10"}`}>
                 <t.i className="h-3.5 w-3.5 shrink-0" /><span className="max-w-full text-center">{t.l}</span>
                 {t.n > 0 && <span className="absolute -top-1 left-1 rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">{t.n}</span>}
@@ -388,7 +400,12 @@ function Dashboard({ pw, onLogout }: { pw: string; onLogout: () => void }) {
           </div>
           <ul className="overflow-hidden rounded-lg border border-border lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
             {shown.map((c) => (
-              <li key={c.id} onClick={() => setOpenId(c.id)} className={`flex cursor-pointer items-center gap-3 border-b border-r-4 border-b-border px-3 py-2.5 transition last:border-b-0 hover:bg-muted/60 ${openId === c.id ? "border-r-primary bg-primary/10" : "border-r-transparent"}`}>
+              <li key={c.id} onClick={() => { if (rowFired.current) { rowFired.current = false; return; } setOpenId(c.id); }}
+                onPointerDown={() => { rowFired.current = false; rowCancel(); rowT.current = setTimeout(() => rowLong(c), 600); }}
+                onPointerUp={rowCancel} onPointerLeave={rowCancel} onPointerCancel={rowCancel}
+                onContextMenu={(e) => { e.preventDefault(); rowLong(c); }}
+                style={{ WebkitTouchCallout: "none", userSelect: "none" }}
+                className={`flex cursor-pointer items-center gap-3 border-b border-r-4 border-b-border px-3 py-2.5 transition last:border-b-0 hover:bg-muted/60 ${openId === c.id ? "border-r-primary bg-primary/10" : "border-r-transparent"}`}>
                 <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
                   <User className="h-5 w-5" /><span className="absolute bottom-0 left-0 h-2.5 w-2.5 rounded-full border-2 border-card bg-s-green" />
                 </div>
