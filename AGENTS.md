@@ -58,3 +58,4 @@ use the editor.
 - `orders_legacy`: unused old orders table, kept for its rows.
 - `formulas.presetItems` (title → [key, qty]) overrides preset items in `loadPreset` — one stored edit, originals in code.
 - HV storage choice: `src/lib/storage.ts` ↔ bot `ACTES_STORAGE_*` — change together.
+- Chat deletion is soft: `customers.deleted_at` / `blocked` / `hidden_before`; `listCustomers` hides them, bot-message applies `src/lib/chat-visibility.ts`, the hidden archive (hold "المحادثات" 5 s) restores — so deleted chats stay recoverable.

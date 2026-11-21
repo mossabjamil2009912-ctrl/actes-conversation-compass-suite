@@ -26,5 +26,5 @@
 - [x] Catalog platform inside this project: catalogs + PDFs moved here, /catalogs page, viewer, admin
 - [x] Catalog smart assistant here with short, direct answers
 - [x] CRM "منصة الكتالوجات" button opens the internal catalog page
-- [ ] Long-press a chat: "delete" (hide on all devices) and "delete permanently" (block number, hide future messages)
-- [ ] Hold the "المحادثات" tab 5 s: view deleted/blocked chats and restore them
+- [x] Long-press a chat: "delete" (hide on all devices) and "delete permanently" (block number, hide future messages)
+- [x] Hold the "المحادثات" tab 5 s: view deleted/blocked chats and restore them
